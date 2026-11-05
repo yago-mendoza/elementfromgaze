@@ -58,7 +58,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     screen.make_dpi_aware()
     W, H = screen.screen_size_px()
 
-    aff = AffineKalman(W, H)          # global deformation (fast, few labels)
+    aff = AffineKalman.seeded(W, H, model)   # global deformation (fast, few labels); starts from the warm-up check
     corr = ResidualCorrector()       # local residual field on top (needs many labels)
     blinker = BlinkDetector()
     # Kalman while the gaze moves (no lag), fixation filter once it's still (steady); see filters.py

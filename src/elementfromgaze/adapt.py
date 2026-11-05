@@ -160,6 +160,19 @@ class AffineKalman:
         self.theta = np.array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0])
         self.P = self.P0.copy()
 
+    def state(self) -> dict:
+        return {"theta": self.theta.copy(), "P": self.P.copy()}
+
+    @classmethod
+    def seeded(cls, W: int, H: int, model=None) -> "AffineKalman":
+        """A fresh filter, started from the correction the warm-up's button check measured
+        (model.start_aff) when there is one."""
+        k = cls(W, H)
+        st = getattr(model, "start_aff", None)
+        if st is not None:
+            k.theta, k.P = np.array(st["theta"], float), np.array(st["P"], float)
+        return k
+
     def describe(self) -> str:
         a11, a12, b1, a21, a22, b2 = self.theta
         return f"ganancia x{a11:.2f} y{a22:.2f} · desplazamiento ({b1 * self.W:+.0f}, {b2 * self.H:+.0f}) px"

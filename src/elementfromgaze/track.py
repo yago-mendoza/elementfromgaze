@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import json
 import math
+import random
 import time
 
 import numpy as np
 
 from . import screen
 from .app import BGS, INTRO_BG, PURSUIT_LAG_S, Segment, Stage, message
+from .adapt import AffineKalman
 from .filters import GazeSmoother
 from .overlay import OFF_MARGIN_PX
 from .tracker import DATA, GazeModel
@@ -59,6 +61,7 @@ class TrackStage(Stage):
 
     def __init__(self, W, H, model: GazeModel):
         self.model = model
+        self.aff = AffineKalman.seeded(W, H, model)          # same start as `efg dot` (no click learning here)
         self.fixf = GazeSmoother(still_s=0.2, meas_sd_px=50, accel_sd_px_s2=1500, lead_s=0.08)   # same as `efg dot`
         self.shown: dict[int, bool] = {}
         self._dot: tuple[float, float] | None = None
@@ -77,7 +80,7 @@ class TrackStage(Stage):
 
     # the dot pipeline, without learning: network -> blink/eyes gate -> off-screen -> fixation filter
     def extra_for(self, s, seg, lt) -> dict:
-        base = self.model.predict_full(s.features, s.patches)[0]
+        base = self.aff.apply(self.model.predict_full(s.features, s.patches)[0])
         out = (np.nan, np.nan)
         outside = bool(base[0] < -OFF_MARGIN_PX or base[0] > self.W + OFF_MARGIN_PX
                        or base[1] < -OFF_MARGIN_PX or base[1] > self.H + OFF_MARGIN_PX)
@@ -180,11 +183,18 @@ def track(note: str = "", warm: bool = True, rewarm: bool = False) -> None:
 
 
 # ---------------------------------------------------------------------------
-class WarmupStage(Stage):
-    """~45 s following a ring (no dot shown): fresh labels in the posture you are in right now."""
+CHECK_POINTS = [(fx, fy) for fy in (0.08, 0.5, 0.92) for fx in (0.08, 0.5, 0.92)]
+CHECK_S, CHECK_SETTLE_S = 1.6, 0.6
 
-    title = "Calentamiento (≈50 s)"
-    intro_text = ("Sigue con la mirada el ARO hasta que termine.\n"
+
+class WarmupStage(Stage):
+    """~45 s following a ring (no dot shown): fresh labels in the posture you are in right now.
+    Then ~15 s looking at 9 lit buttons: NOT used to fine-tune, but to measure what the fine-tuned
+    network still gets wrong on real fixations (on `targets` it left a 1.5° vertical bias), which
+    seeds the global correction of `efg dot` so it is right from the first second, before any click."""
+
+    title = "Calentamiento (≈65 s)"
+    intro_text = ("Sigue con la mirada el ARO; al final, mira cada BOTÓN que se ilumine.\n"
                   "Siéntate como vas a usar el ordenador: así el modelo se ajusta a tu postura de ahora.\n\n"
                   "ESPACIO para empezar · ESC para saltarlo")
 
@@ -196,15 +206,57 @@ class WarmupStage(Stage):
         # dwells there
         for k, (fx, fy) in enumerate([(0.04, 0.05), (0.96, 0.05), (0.96, 0.95), (0.04, 0.95)]):
             segs.append(Segment("fix", 1.9, (lambda t, x=fx * W, y=fy * H: (x, y)), 0.7, bg=BGS[k % 2]))
+        pts = CHECK_POINTS[:]
+        random.shuffle(pts)
+        segs.append(message("Ahora mira cada botón que se ilumine.", 1.8))
+        for fx, fy in pts:
+            segs.append(Segment("check", CHECK_S, (lambda t, x=fx * W, y=fy * H: (x, y)), CHECK_SETTLE_S, bg=INTRO_BG))
+        self.btn_h = 1.5 * screen.px_per_degree()
         super().__init__(segs)
 
     def _draw(self, seg: Segment, lt: float) -> None:
         c = self.canvas
         c.delete("target")
+        if seg.phase == "msg":
+            c.create_text(self.W / 2, self.H / 2, text=seg.message, fill="#eeeeee", font=("Segoe UI", 20), tags="target")
+            return
         x, y = seg.target(lt)
+        if seg.phase == "check":     # the button is centred on the target (points sit far enough from the edges)
+            h = self.btn_h
+            c.create_rectangle(x - h, y - h / 2, x + h, y + h / 2, fill="#e8a33d", outline="#ffd27a", tags="target")
+            c.create_text(x, y, text="Aceptar", fill="#1b1b1b", font=("Segoe UI", int(h * 0.3)), tags="target")
+            return
         ink = _ink(seg.bg)
         c.create_oval(x - 15, y - 15, x + 15, y + 15, outline=ink, width=3, tags="target")
         c.create_oval(x - 2, y - 2, x + 2, y + 2, fill=ink, outline="", tags="target")
+
+
+def check_correction(model: GazeModel, rec, W, H) -> dict | None:
+    """Global correction (shift + bounded per-axis gain) from the 9 button fixations, measured
+    with the already fine-tuned network: one 'click' per button, as `efg dot` would learn them."""
+    c = rec.cols
+    ph, lt, seg = np.array(c["phase"]), np.array(c["local_t"]), np.array(c["seg"])
+    k = (ph == "check") & (lt >= CHECK_SETTLE_S) & np.array(c["eyes_ok"])
+    if k.sum() < 40:
+        return None
+    pred = model.predict_full(np.array(c["features"])[k], np.array(c["patches"])[k])
+    Y, T, S = np.array(c["targets"], float)[k], np.array(c["t"])[k], seg[k]
+    aff, errs = AffineKalman(W, H), []
+    for sg in np.unique(S):
+        q = S == sg
+        if q.sum() < 5:
+            continue
+        m = np.median(pred[q], 0)
+        errs.append(m - Y[q][0])
+        aff.add(m, Y[q][0], float(T[q][-1]))
+    if len(errs) < 5:
+        return None
+    e = np.array(errs)
+    ppd = screen.px_per_degree()
+    print(f"comprobación con botones: error {np.median(np.linalg.norm(e, axis=1)) / ppd:.2f}° · sesgo "
+          f"({np.median(e[:, 0]):+.0f}, {np.median(e[:, 1]):+.0f}) px -> corrección {aff.describe()} "
+          f"({aff.accepted}/{len(e)} aceptados)")
+    return aff.state()
 
 
 WARM_MAX_AGE_S = 30 * 60
@@ -248,7 +300,7 @@ def warmup(model: GazeModel, rounds: int = 8) -> GazeModel:   # 8 > 4: 1.45° ->
         print("calentamiento saltado")
         return model
     c = stage.rec.cols
-    ok = np.array(c["valid"])
+    ok = np.array(c["valid"]) & np.isin(np.array(c["phase"]), ("pursuit", "fix"))
     X, Y = np.array(c["features"])[ok], np.array(c["targets"], np.float32)[ok]
     P = np.array(c["patches"])[ok]
     print(f"calentamiento: {ok.sum()} muestras válidas · ajustando la red a tu postura…")
@@ -263,6 +315,7 @@ def warmup(model: GazeModel, rounds: int = 8) -> GazeModel:   # 8 > 4: 1.45° ->
                             np.vstack([Y, pr["Y"][rep]]), steps=40, seed=k)
     tuned = copy.copy(model)
     tuned.appearance = app
+    tuned.start_aff = check_correction(tuned, stage.rec, W, H)
     print(f"listo en {time.monotonic() - t0:.0f}s")
     stage.rec.save(W, H, "warmup", "calentamiento de `efg dot`", stage.worker.stats())
     tuned.save(_warm_path())

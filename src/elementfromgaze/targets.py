@@ -81,6 +81,8 @@ class TargetsStage(Stage):
 
     def __init__(self, W, H, model: GazeModel, show: bool = False, seed: int | None = None):
         self.model, self.show = model, show
+        from .adapt import AffineKalman
+        self.aff = AffineKalman.seeded(W, H, model)      # same start as `efg dot`
         self.fixf = GazeSmoother(still_s=0.2, meas_sd_px=50, accel_sd_px_s2=1500, lead_s=0.08)   # same as `efg dot`
         ppd = screen.px_per_degree()
         rng = random.Random(seed if seed is not None else time.time_ns())
@@ -109,7 +111,7 @@ class TargetsStage(Stage):
     # same pipeline as `efg dot` without click learning: network -> eyes gate -> off-screen -> smoother
     def extra_for(self, s, seg, lt) -> dict:
         gi, b = self.trial.get(id(seg), (-1, -1))
-        base = self.model.predict_full(s.features, s.patches)[0]
+        base = self.aff.apply(self.model.predict_full(s.features, s.patches)[0])
         out = (np.nan, np.nan)
         outside = bool(base[0] < -OFF_MARGIN_PX or base[0] > self.W + OFF_MARGIN_PX
                        or base[1] < -OFF_MARGIN_PX or base[1] > self.H + OFF_MARGIN_PX)
