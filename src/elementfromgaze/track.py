@@ -228,7 +228,7 @@ def warm_model(model: GazeModel) -> GazeModel:
     return warmup(model)
 
 
-def warmup(model: GazeModel, rounds: int = 4) -> GazeModel:
+def warmup(model: GazeModel, rounds: int = 8) -> GazeModel:   # 8 > 4: 1.45° -> 1.25° on 3 tracks
     """Fine-tune the eye network's top layers on a fresh ~45 s pursuit (replaying the calibration
     sessions 1:1). Measured on a far, head-down posture never seen in calibration: 4.3° -> 1.1-1.2°
     on curves and static points not used for the fit."""

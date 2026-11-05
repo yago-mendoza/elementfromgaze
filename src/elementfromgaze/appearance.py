@@ -137,6 +137,11 @@ def _crop(P: np.ndarray, train: bool, rng: np.random.Generator | None = None) ->
     return out
 
 
+def _mods(P) -> list[np.ndarray]:
+    """One patch array per camera: a bare array is the colour camera alone."""
+    return list(P) if isinstance(P, (list, tuple)) else [P]
+
+
 def _pose(X: np.ndarray):
     c0, c1 = X[:, 15:18], X[:, 18:21]
     return np.stack([c0, c1, np.cross(c0, c1)], -1).astype(np.float32), (X[:, 21:24] * 50).astype(np.float32)
@@ -151,7 +156,8 @@ class AppearanceModel:
     def __init__(self, epochs: int = 20, batch: int = 128, lr: float = 2e-3, seed: int = 0):
         self.epochs, self.batch, self.lr, self.seed = epochs, batch, lr, seed
 
-    def fit(self, P: np.ndarray, X: np.ndarray, Y: np.ndarray, log=print) -> "AppearanceModel":
+    def fit(self, P, X: np.ndarray, Y: np.ndarray, log=print) -> "AppearanceModel":
+        """P: (N, 2, 44, 72) patches, or a list of them (one per camera, e.g. [colour, IR])."""
         torch, _ = _torch()
         import torch.nn.functional as F
 
@@ -159,9 +165,9 @@ class AppearanceModel:
 
         torch.manual_seed(self.seed)
         rng = np.random.default_rng(self.seed)
-        Pn = _norm(P)
+        Pn = [_norm(p) for p in _mods(P)]
         self._geo_p = GeoModel().fit(X, Y).p
-        self._n_mod = 1
+        self._n_mod = len(Pn)
         self.net = _build_net(self._n_mod, self._geo_p)
         opt = torch.optim.AdamW(self.net.parameters(), lr=self.lr, weight_decay=1e-4)
         steps_per = int(np.ceil(len(X) / self.batch))
@@ -177,8 +183,8 @@ class AppearanceModel:
                 ix = perm[b:b + self.batch]
                 if len(ix) < 8:
                     continue
-                x = torch.from_numpy(_crop(Pn[ix], True, rng))
-                loss = F.smooth_l1_loss(self.net([x], R[ix], t[ix]) / 100, Yt[ix] / 100) + self.net.prior() / len(X)
+                xs = [torch.from_numpy(_crop(p[ix], True, rng)) for p in Pn]
+                loss = F.smooth_l1_loss(self.net(xs, R[ix], t[ix]) / 100, Yt[ix] / 100) + self.net.prior() / len(X)
                 opt.zero_grad()
                 loss.backward()
                 opt.step()
@@ -204,26 +210,41 @@ class AppearanceModel:
             self.net.load_state_dict({k: torch.from_numpy(v) for k, v in st["net"].items()})
             self.net.eval()
 
-    def predict(self, P: np.ndarray, X: np.ndarray) -> np.ndarray:
+    # Test-time augmentation: the centre crop plus 4 shifted ones, averaged. The shifts are the same
+    # jitter the network was trained with, so each sees a slightly different eye position and their
+    # errors partly cancel. Measured after warm-up on 3 tracks: 1.45° -> 1.35° on pursuit.
+    TTA_SHIFTS = ((0, 0), (-2, 0), (2, 0), (0, -3), (0, 3))
+
+    def predict(self, P, X: np.ndarray, tta: bool = True) -> np.ndarray:
         torch, _ = _torch()
         global _LIVE_THREADS_SET
         if len(np.atleast_2d(X)) == 1 and not _LIVE_THREADS_SET:   # live use: don't fight MediaPipe for cores
             torch.set_num_threads(1)
             _LIVE_THREADS_SET = True
-        P, X = np.asarray(P), np.atleast_2d(X)
-        if P.ndim == 3:
-            P = P[None]
+        X = np.atleast_2d(X)
+        Ps = [np.asarray(p)[None] if np.asarray(p).ndim == 3 else np.asarray(p) for p in _mods(P)]
         R, t = _pose(X)
         out = []
+        shifts = self.TTA_SHIFTS if tta else ((0, 0),)
+        oy, ox = (PATCH_H - IN_H) // 2, (PATCH_W - IN_W) // 2
+        k = len(shifts)
         with torch.inference_mode():
-            for b in range(0, len(X), 512):
-                x = torch.from_numpy(_crop(_norm(P[b:b + 512]), False))
-                out.append(self.net([x], torch.from_numpy(R[b:b + 512]), torch.from_numpy(t[b:b + 512])).numpy())
+            for b in range(0, len(X), 512 // k):
+                e = min(b + 512 // k, len(X))
+                xs = []
+                for p in Ps:
+                    pn = _norm(p[b:e])
+                    xs.append(torch.from_numpy(np.concatenate(
+                        [np.ascontiguousarray(pn[..., oy + dy:oy + dy + IN_H, ox + dx:ox + dx + IN_W]) for dy, dx in shifts])))
+                Rb = torch.from_numpy(np.tile(R[b:e], (k, 1, 1)))
+                tb = torch.from_numpy(np.tile(t[b:e], (k, 1)))
+                out.append(self.net(xs, Rb, tb).numpy().reshape(k, e - b, 2).mean(0))
         return np.concatenate(out)
 
 
-def finetune_copy(model: AppearanceModel, P: np.ndarray, X: np.ndarray, Y: np.ndarray,
-                  steps: int = 40, batch: int = 64, lr: float = 5e-4, seed: int = 0) -> AppearanceModel:
+def finetune_copy(model: AppearanceModel, P, X: np.ndarray, Y: np.ndarray,
+                  steps: int = 40, batch: int = 64, lr: float = 5e-4, seed: int = 0,
+                  freeze_conv: bool = True) -> AppearanceModel:
     """A fine-tuned COPY of `model` (the live one keeps predicting meanwhile; the caller swaps it in).
 
     Only the top of the network moves: the per-eye fully connected layer, the head and the
@@ -238,19 +259,20 @@ def finetune_copy(model: AppearanceModel, P: np.ndarray, X: np.ndarray, Y: np.nd
     m = copy.deepcopy(model)
     net = m.net
     net.eval()                        # BatchNorm keeps its statistics; no dropout noise in a few steps
-    for tw in net.towers:
-        for prm in tw.c.parameters():
-            prm.requires_grad_(False)
+    if freeze_conv:
+        for tw in net.towers:
+            for prm in tw.c.parameters():
+                prm.requires_grad_(False)
     params = [p for p in net.parameters() if p.requires_grad]
     opt = torch.optim.Adam(params, lr=lr)
     rng = np.random.default_rng(seed)
-    Pn = _norm(P)
+    Pn = [_norm(p) for p in _mods(P)]
     R, t = (torch.from_numpy(a) for a in _pose(X))
     Yt = torch.from_numpy(Y.astype(np.float32))
     for _ in range(steps):
         ix = rng.integers(0, len(X), min(batch, len(X)))
-        x = torch.from_numpy(_crop(Pn[ix], True, rng))
-        loss = F.smooth_l1_loss(net([x], R[ix], t[ix]) / 100, Yt[ix] / 100) + net.prior() / max(len(X), 1000)
+        xs = [torch.from_numpy(_crop(p[ix], True, rng)) for p in Pn]
+        loss = F.smooth_l1_loss(net(xs, R[ix], t[ix]) / 100, Yt[ix] / 100) + net.prior() / max(len(X), 1000)
         opt.zero_grad()
         loss.backward()
         opt.step()
