@@ -187,7 +187,7 @@ def trials(rec, grids):
         if k.sum() < 5:
             continue
         g, b = int(gi[k][0]), int(bi[k][0])
-        rows.append({"grid": g, "button": b, "target": grids[g].centres[b], "dots": out[k]})
+        rows.append({"grid": g, "button": b, "target": grids[g].centres[b], "dots": out[k], "t": float(np.array(rec.cols["t"])[k][-1])})
     return rows
 
 
@@ -200,6 +200,18 @@ def size_curve(rows, ppd, sizes_deg=(0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 4.0)):
         hx, hy = h * ASPECT * (1 + GAP / ASPECT) / 2, h * (1 + GAP) / 2
         out[d] = float(np.mean((np.abs(e[:, 0]) <= hx) & (np.abs(e[:, 1]) <= hy)))
     return out, e
+
+
+def with_clicks(rows, W, H):
+    """What `efg dot` with click learning would have shown: every trial ends in a 'click' on the lit
+    button, and the global correction (adapt.AffineKalman) only uses PAST trials."""
+    from .adapt import AffineKalman
+
+    aff, out = AffineKalman(W, H), []
+    for r in rows:
+        out.append(dict(r, dots=np.array([aff.apply(p) for p in r["dots"]])))
+        aff.add(np.median(r["dots"], 0), r["target"], r["t"])
+    return out
 
 
 def summarize(rec, grids) -> dict | None:
@@ -223,6 +235,12 @@ def summarize(rec, grids) -> dict | None:
                                        "n": len(rr), "h_px": round(g.h)}
     curve, e = size_curve(rows, ppd)
     rep["curve"] = {f"{k:g}": round(v, 3) for k, v in curve.items()}
+    W, H = screen.screen_size_px()
+    cl = with_clicks(rows, W, H)[5:]          # after the first 5 clicks
+    if len(cl) >= 5:
+        c2, e2 = size_curve(cl, ppd)
+        rep["curve_clicks"] = {f"{k:g}": round(v, 3) for k, v in c2.items()}
+        rep["dwell_err_deg_clicks"] = round(float(np.median(np.linalg.norm(e2, axis=1)) / ppd), 2)
     rep["dwell_err_deg"] = round(float(np.median(np.linalg.norm(e, axis=1)) / ppd), 2)
     rep["bias_px"] = [int(round(v)) for v in np.median(e, 0)]
     rep["spread_deg"] = [round(float(v) / ppd, 2) for v in np.percentile(np.abs(e), 75, axis=0)]
@@ -244,6 +262,9 @@ def format_report(rep) -> str:
     need = [float(k) for k, v in rep["curve"].items() if v >= 0.9]
     if need:
         lines.append(f"  → 90% de aciertos desde botones de {min(need):g}° ({min(need) * ppd:.0f} px) de alto")
+    if rep.get("curve_clicks"):
+        lines.append(f"aprendiendo de tus clics (simulado, tras 5): error {rep['dwell_err_deg_clicks']}°")
+        lines.append("  " + "  ".join(f"{k}°:{100 * v:.0f}%" for k, v in rep["curve_clicks"].items()))
     lines.append(f"error por intento {rep['dwell_err_deg']}° · sesgo ({rep['bias_px'][0]:+d}, {rep['bias_px'][1]:+d}) px"
                  f" · dispersión (x, y) {rep['spread_deg'][0]}°, {rep['spread_deg'][1]}°")
     return "\n".join(lines)

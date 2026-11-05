@@ -102,17 +102,19 @@ class AffineKalman:
     looking elsewhere.
     """
 
-    # Gains are OFF by default (prior_gain_sd ~ 0 = shift only). Real labels come in clusters (a
-    # few clicks in one area, a line of text): with gains free, 4 clustered clicks squashed the
-    # whole screen onto a diagonal (measured live), and in simulation clustered labels took a
-    # 0.45° model to 2.2-4.0°. Shift-only stays at 0.6-0.7°. Stretch is the network fine-tune's job.
-    def __init__(self, W: int, H: int, label_sd_px: float = 120.0, prior_gain_sd: float = 1e-3,
+    # Gains are DIAGONAL and tightly bounded. Real labels come in clusters (a few clicks in one
+    # area, a line of text): with a full free affine, 4 clustered clicks squashed the whole screen
+    # onto a diagonal (measured live). Cross terms are therefore pinned to ~0, and the per-axis gains
+    # get a prior sd of 0.1: on the `targets` session (vertical gain 0.85 after warm-up) clicks took
+    # the per-trial error 1.67° -> 1.05° shift-only -> 0.97° with these gains, while 6 clicks
+    # clustered in a 150 px blob on a perfect model cost no more than shift-only (1.20° vs 1.23°
+    # worst case); sd 0.2 was 0.92° but 1.70° in that stress test.
+    def __init__(self, W: int, H: int, label_sd_px: float = 120.0, prior_gain_sd: float = 0.1,
                  prior_shift_sd: float = 0.2, forget_s: float = 600.0, gate: float = 5.0,
                  abs_gate_px: float = 650.0):
         self.W, self.H = float(W), float(H)
         self.theta = np.array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0])
-        self.P0 = np.diag([prior_gain_sd ** 2, (prior_gain_sd / 4) ** 2, prior_shift_sd ** 2,
-                           (prior_gain_sd / 4) ** 2, prior_gain_sd ** 2, prior_shift_sd ** 2])
+        self.P0 = np.diag([prior_gain_sd ** 2, 1e-12, prior_shift_sd ** 2, 1e-12, prior_gain_sd ** 2, prior_shift_sd ** 2])
         self.P = self.P0.copy()
         self.R0 = np.diag([(label_sd_px / W) ** 2, (label_sd_px / H) ** 2])
         self.forget_s, self.gate, self.abs_gate_px = forget_s, gate, abs_gate_px
