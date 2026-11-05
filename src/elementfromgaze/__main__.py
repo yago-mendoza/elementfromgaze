@@ -4,6 +4,7 @@
   efg calibrate    full-screen calibration; each run is saved as a new session and the model retrains
   efg train        retrain the model from every saved session
   efg eval         full-screen accuracy test on random points
+  efg targets      buttons light up, you look; % of buttons picked right per size
   efg dot          red dot over the whole screen where you look (Ctrl+Alt+G quits)
 """
 
@@ -69,6 +70,11 @@ def main() -> None:
     tk_.add_argument("--note", default="")
     tk_.add_argument("--no-warmup", action="store_true", help="measure the base model, without warm-up")
     tk_.add_argument("--rewarm", action="store_true", help="redo the warm-up even if one is <30 min old")
+    tg = sub.add_parser("targets", help="look at lit buttons of shrinking size; measures which you can pick by gaze")
+    tg.add_argument("--note", default="")
+    tg.add_argument("--show", action="store_true", help="outline the button the tracker thinks you look at")
+    tg.add_argument("--no-warmup", action="store_true")
+    tg.add_argument("--rewarm", action="store_true")
     sub.add_parser("ir", help="live view of the infrared camera")
     dt = sub.add_parser("dot")
     dt.add_argument("--no-learn", action="store_true", help="do not learn from clicks/typing")
@@ -87,6 +93,10 @@ def main() -> None:
     if a.cmd == "track":
         from .track import track
         track(a.note, warm=not a.no_warmup, rewarm=a.rewarm)
+        return
+    if a.cmd == "targets":
+        from .targets import targets
+        targets(a.note, warm=not a.no_warmup, rewarm=a.rewarm, show=a.show)
         return
     if a.cmd == "ir":
         from .ircam import view
