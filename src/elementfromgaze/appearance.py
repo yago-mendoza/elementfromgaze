@@ -74,7 +74,8 @@ def _build_net(n_mod: int, geo_p: np.ndarray):
             super().__init__()
             def blk(i, o):
                 return nn.Sequential(nn.Conv2d(i, o, 3, padding=1, bias=False), nn.BatchNorm2d(o), nn.ReLU(), nn.MaxPool2d(2))
-            self.c = nn.Sequential(blk(1, 16), blk(16, 32), blk(32, 48))
+            # adaptive pool: 36x60 input gives 4x7 already (no-op); larger patches pool down to it
+            self.c = nn.Sequential(blk(1, 16), blk(16, 32), blk(32, 48), nn.AdaptiveAvgPool2d((4, 7)))
             self.fc = nn.Sequential(nn.Flatten(), nn.Dropout(0.2), nn.Linear(48 * 4 * 7, 64), nn.ReLU())
 
         def forward(self, x):
