@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "elementfromgaze"
+version = "0.0.1"
+description = "Webcam gaze tracking that answers: which UI element am I looking at?"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "mediapipe>=0.10.30",
+  "opencv-python>=4.9",
+  "numpy>=1.26",
+  "scikit-learn>=1.4",
+  "scipy",
+  "torch",
+  "winrt-runtime; sys_platform == 'win32'",
+  "winrt-Windows.Media.Capture; sys_platform == 'win32'",
+  "winrt-Windows.Media.Capture.Frames; sys_platform == 'win32'",
+  "winrt-Windows.Graphics.Imaging; sys_platform == 'win32'",
+  "winrt-Windows.Storage.Streams; sys_platform == 'win32'",
+  "winrt-Windows.Foundation; sys_platform == 'win32'",
+  "winrt-Windows.Foundation.Collections; sys_platform == 'win32'",
+]
+
+[project.scripts]
+efg = "elementfromgaze.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,262 @@
+"""`efg dot`: the red dot over the whole screen, learning from your clicks and typing as you go.
+
+Per frame:   eye network (or feature model) -> global deformation (Kalman) -> local field -> blink gate
+             -> fixation filter
+Three speeds of learning: the deformation Kalman moves with every label (seconds); every ~60 new
+labelled samples the network's top layers fine-tune in the background on them plus a replay of the
+calibration sessions (minutes), then the fast correctors reset since the network now holds it;
+`efg train` refits everything (sessions).
+Per click:   gaze samples from 350 ms before to 50 ms after = one label at the cursor
+Per keypress (with an exposed text caret, max ~3/s): one label at the caret, lower confidence
+On exit:     every label is saved as an 'implicit' session, so `efg train` folds it into the base model.
+"""
+
+from __future__ import annotations
+
+import ctypes
+import threading
+import time
+import tkinter as tk
+from collections import deque
+
+import numpy as np
+
+from . import screen
+from .adapt import AffineKalman, ResidualCorrector, pose_vector
+from .app import Recorder, Segment, lid_opening
+from .features import Sample, head_euler
+from .filters import BlinkDetector, FixationFilter, GazeSmoother
+from .implicit import InputWatcher, caret_position, cursor_position
+from .tracker import USER_MODEL, FeatureWorker, GazeModel
+
+TRANSPARENT = "#010101"
+VK = {"ctrl": 0x11, "alt": 0x12, "g": 0x47}
+LABEL_DELAY_S = 0.12
+WINDOWS = {"click": (-0.35, 0.05, 1.0), "caret": (-0.25, 0.10, 0.6)}  # from, to, confidence
+KEY_MIN_GAP_S = 0.35
+OFF_MARGIN_PX = 90      # prediction this far outside the screen = not looking at it (edges data:
+OFF_FRAMES = 3           # ~95% of look-aways caught, <1% false alarms)
+TYPING_RADIUS_PX = 240   # ~4°: below this, movement while typing is treated as shake
+TYPING_HOLD_S = 0.8
+TUNE_EVERY = 60          # new labelled samples (~6 clicks or ~10 caret labels) per fine-tune
+TUNE_MIN_GAP_S = 20.0
+
+
+def _hotkey_down() -> bool:
+    k = ctypes.windll.user32.GetAsyncKeyState
+    return all(k(v) & 0x8000 for v in VK.values())
+
+
+def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = False) -> None:
+    if not USER_MODEL.exists():
+        raise SystemExit("no hay modelo todavía: corre `efg calibrate` primero")
+    model = GazeModel.load()
+    if warm:   # posture is the biggest source of error: adapt to the one you're in now
+        from .track import warm_model, warmup
+        model = warmup(model) if rewarm else warm_model(model)
+    state = {"model": model}
+    screen.make_dpi_aware()
+    W, H = screen.screen_size_px()
+
+    aff = AffineKalman(W, H)          # global deformation (fast, few labels)
+    corr = ResidualCorrector()       # local residual field on top (needs many labels)
+    blinker = BlinkDetector()
+    # Kalman while the gaze moves (no lag), fixation filter once it's still (steady); see filters.py
+    fixf = GazeSmoother(still_s=0.2, meas_sd_px=50, accel_sd_px_s2=1500, lead_s=0.08)
+    # Typing shakes the laptop, so the camera and the dot shake. While keys are being pressed the
+    # eyes sit on the text anyway: a wider, longer fixation filter holds the dot still.
+    fixf_typing = FixationFilter(radius=TYPING_RADIUS_PX, window=20)
+    typing = {"last_key": -1e9}
+    lock = threading.Lock()
+    recent: "deque[tuple]" = deque(maxlen=60)   # (t, base, h, sample, blink)
+    latest: dict = {}
+    stats = {"keys_no_caret": 0, "labels": 0}
+    rec = Recorder()
+    # Diagnostic trace of every frame (no images): what the model said, what was shown, whether
+    # it was held, and where the mouse was. This is what lets us debug "it never reaches the bottom".
+    trace = Recorder(save_frames=False)
+    trace_seg = Segment("dotlog", 0.0, None)
+    TRACE_MAX = 30 * 60 * 20
+
+    def on_sample(s: Sample) -> None:
+        base = state["model"].predict_full(s.features, s.patches)[0]
+        h = pose_vector(head_euler(s.matrix), float(s.features[6]))
+        is_blink = blinker(lid_opening(s), s.eye_blink)
+        held = is_blink or not s.eyes_ok
+        with lock:
+            recent.append((s.t, base, h, s, held))
+            a = aff.apply(base)
+            c = a - base + corr.correction(a, h, s.t)
+        out = latest.get("p", (np.nan, np.nan))
+        p_raw = base + c
+        outside = (p_raw[0] < -OFF_MARGIN_PX or p_raw[0] > W + OFF_MARGIN_PX
+                   or p_raw[1] < -OFF_MARGIN_PX or p_raw[1] > H + OFF_MARGIN_PX)
+        latest["off_run"] = latest.get("off_run", 0) + 1 if (outside and not held) else 0
+        if latest["off_run"] >= OFF_FRAMES:            # looking at the keyboard / away: hide the dot
+            latest["off_t"] = s.t
+        if not held and not outside:
+            p = p_raw
+            x, y = float(np.clip(p[0], 0, W)), float(np.clip(p[1], 0, H))
+            calm, still = fixf(x, y, s.t), fixf_typing(x, y)      # both see every frame: no jump on switch
+            out = still if s.t - typing["last_key"] < TYPING_HOLD_S else calm
+            latest["p"], latest["t"] = out, s.t
+        if len(trace) < TRACE_MAX:
+            cur = cursor_position()
+            trace.add(s, seg_i=0, local_t=0.0, seg=trace_seg, target_now=cur, target=cur, valid=False,
+                      extra={"base": base, "corr": c, "out": out, "blink": is_blink, "held": held, "outside": outside})
+
+    # --- window ----------------------------------------------------------
+    root = tk.Tk()
+    root.overrideredirect(True)
+    root.geometry(f"{W}x{H}+0+0")
+    root.configure(bg=TRANSPARENT)
+    root.attributes("-transparentcolor", TRANSPARENT)
+    root.attributes("-topmost", True)
+    canvas = tk.Canvas(root, bg=TRANSPARENT, highlightthickness=0)
+    canvas.pack(fill="both", expand=True)
+    dot_id = canvas.create_oval(0, 0, 0, 0, fill="#ff2d20", outline="#ffffff", width=2, state="hidden")
+    root.update_idletasks()
+    screen.make_click_through(ctypes.windll.user32.GetParent(root.winfo_id()))
+
+    def flash(pos, ok: bool) -> None:
+        x, y = pos
+        i = canvas.create_oval(x - 16, y - 16, x + 16, y + 16, outline="#34c759" if ok else "#8e8e93", width=2)
+        root.after(350, lambda: canvas.delete(i))
+
+    # --- live fine-tuning of the eye network from accepted labels -------------
+    tune = {"X": [], "Y": [], "P": [], "n_new": 0, "busy": False, "last": time.monotonic(), "fits": 0, "prior": None}
+    can_tune = learn and getattr(state["model"], "appearance", None) is not None
+
+    def load_prior() -> None:
+        from .tracker import load_sessions
+        try:
+            d = load_sessions(with_patches=True)
+        except SystemExit:
+            return
+        rows = np.where(d["has_P"])[0]
+        idx = rows[np.linspace(0, len(rows) - 1, min(3000, len(rows))).astype(int)]
+        tune["prior"] = (d["X"][idx], d["Y"][idx], d["P"][idx])
+
+    if can_tune:
+        threading.Thread(target=load_prior, daemon=True).start()
+
+    def maybe_tune(now: float) -> None:
+        if (not can_tune or tune["busy"] or tune["prior"] is None or tune["n_new"] < TUNE_EVERY
+                or now - tune["last"] < TUNE_MIN_GAP_S):
+            return
+        tune["busy"], tune["n_new"] = True, 0
+        k = min(len(tune["X"]), 1500)
+        Xn, Yn, Pn = np.array(tune["X"][-k:]), np.array(tune["Y"][-k:]), np.array(tune["P"][-k:])
+
+        def work():
+            import copy
+
+            from .appearance import finetune_copy
+            try:
+                Xp, Yp, Pp = tune["prior"]
+                # Click/typing labels come clustered (a few spots, a line of text): fine-tuning on them
+                # alone drifts the rest of the screen (simulated: 0.4° -> up to 1.0°). So: 4x replay
+                # of the calibration sessions, a smaller step, fewer iterations.
+                rep = np.random.default_rng(tune["fits"]).choice(len(Xp), min(max(4 * k, 600), len(Xp)), replace=False)
+                tuned = finetune_copy(state["model"].appearance, np.concatenate([Pn, Pp[rep]]),
+                                      np.vstack([Xn, Xp[rep]]), np.vstack([Yn, Yp[rep]]), steps=30, lr=3e-4,
+                                      seed=tune["fits"])
+                m = copy.copy(state["model"])
+                m.appearance = tuned
+                with lock:
+                    state["model"] = m
+                    aff.forget()
+                    corr.forget()
+                tune["fits"] += 1
+            finally:
+                tune["last"] = time.monotonic()
+                tune["busy"] = False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    worker = FeatureWorker(on_sample)
+    watcher = InputWatcher().start() if learn else None
+    last_key_label = [0.0]
+    last_print = [time.monotonic()]
+    print("punto rojo activo · aprende de clics y escritura" if learn else "punto rojo activo",
+          "· Ctrl+Alt+G para salir")
+
+    def absorb(kind: str, t_ev: float, pos) -> None:
+        lo, hi, conf = WINDOWS[kind]
+        with lock:
+            rows = [r for r in recent if t_ev + lo <= r[0] <= t_ev + hi and not r[4]]
+        if len(rows) < 3:
+            return
+        p = np.median([r[1] for r in rows], axis=0)
+        h = np.median([r[2] for r in rows], axis=0)
+        with lock:
+            ok = aff.add(p, pos, t_ev, conf)
+            if ok:
+                corr.add(aff.apply(p), h, pos, t_ev, conf)
+        seg = Segment(kind, 0.0, None)
+        idx = stats["labels"]
+        stats["labels"] += 1
+        for r in rows:
+            rec.add(r[3], seg_i=idx, local_t=1.0, seg=seg, target_now=pos, target=pos, valid=ok)
+            if ok and can_tune and r[3].patches is not None:
+                tune["X"].append(r[3].features)
+                tune["Y"].append(np.asarray(pos, np.float32))
+                tune["P"].append(r[3].patches)
+                tune["n_new"] += 1
+        flash(pos, ok)
+
+    def tick() -> None:
+        if _hotkey_down():
+            root.destroy()
+            return
+        now = time.monotonic()
+        if watcher:
+            for ev in watcher.drain_ready(now, LABEL_DELAY_S):
+                if ev.kind != "click":
+                    typing["last_key"] = max(typing["last_key"], ev.t)
+                if ev.kind == "click":
+                    absorb("click", ev.t, ev.pos)
+                elif ev.t - last_key_label[0] >= KEY_MIN_GAP_S:
+                    pos = caret_position()
+                    if pos is None or not (0 <= pos[0] < W and 0 <= pos[1] < H):
+                        stats["keys_no_caret"] += 1
+                        continue
+                    last_key_label[0] = ev.t
+                    absorb("caret", ev.t, pos)
+        maybe_tune(now)
+        p = latest.get("p")
+        looking_away = now - latest.get("off_t", -1e9) < 0.25
+        if p is not None and now - latest["t"] < 0.6 and not looking_away:
+            x, y = p
+            canvas.coords(dot_id, x - radius, y - radius, x + radius, y + radius)
+            canvas.itemconfigure(dot_id, state="normal")
+        else:
+            canvas.itemconfigure(dot_id, state="hidden")
+        root.attributes("-topmost", True)
+        if now - last_print[0] > 10:
+            last_print[0] = now
+            with lock:
+                desc = aff.describe()
+            print(f"   {worker.stats()} · etiquetas ✓{aff.accepted} ✗{aff.rejected} · "
+                  f"teclas sin caret {stats['keys_no_caret']} · {desc}"
+                  + (f" · red ajustada {tune['fits']} veces" if can_tune else ""))
+        root.after(16, tick)
+
+    root.after(16, tick)
+    # Ctrl+C in the terminal: close the window cleanly so the sessions below still get saved
+    import signal
+    signal.signal(signal.SIGINT, lambda *_: root.after(0, root.destroy))
+    try:
+        root.mainloop()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if watcher:
+            watcher.stop()
+        worker.close()
+        if len(trace):
+            print("registro de diagnóstico:", trace.save(W, H, "dotlog", "traza por fotograma de `efg dot`", worker.stats()))
+        if len(rec):
+            path = rec.save(W, H, "implicit", "clics y escritura durante `efg dot`", worker.stats())
+            print(f"guardadas {stats['labels']} etiquetas implícitas ({len(rec)} muestras) en {path}")
+            print("corre `efg train` para incorporarlas al modelo base")

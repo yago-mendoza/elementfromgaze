@@ -1,0 +1,108 @@
+"""efg — command line for elementfromgaze.
+
+  efg probe        camera + landmarker check, prints speed (no windows)
+  efg calibrate    full-screen calibration; each run is saved as a new session and the model retrains
+  efg train        retrain the model from every saved session
+  efg eval         full-screen accuracy test on random points
+  efg dot          red dot over the whole screen where you look (Ctrl+Alt+G quits)
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import time
+
+os.environ.setdefault("GLOG_minloglevel", "2")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+
+
+def probe(seconds: float = 5.0) -> None:
+    from .tracker import FeatureWorker
+
+    got = {"n": 0, "last": None}
+
+    def on_sample(s):
+        got["n"] += 1
+        got["last"] = s
+
+    w = FeatureWorker(on_sample)
+    time.sleep(seconds)
+    w.close()
+    s = got["last"]
+    print(f"{got['n']} muestras con cara en {seconds:.0f}s · {w.stats()}")
+    if s is not None:
+        print("features:", s.features.round(3).tolist())
+        print("crops:", s.crops.shape, "blink:", round(s.blink, 2))
+
+
+def main() -> None:
+    import sys
+
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+    ap =argparse.ArgumentParser(prog="efg", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--hd", action="store_true", help="colour camera at 1920x1080 (more eye detail, ~17 fps)")
+    ap.add_argument("--no-train", action="store_true", help="record only; don't retrain after a session")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("probe")
+    c = sub.add_parser("calibrate")
+    c.add_argument("--tag", default="normal", help="condition label, e.g. 'lejos', 'ladeado', 'lampara-off'")
+    c.add_argument("--note", default="", help="free text: light, glasses, tiredness, time of day…")
+    sub.add_parser("train")
+    e = sub.add_parser("eval")
+    e.add_argument("-n", type=int, default=12)
+    e.add_argument("--tag", default="normal")
+    e.add_argument("--note", default="")
+    mv = sub.add_parser("motion", help="fixate points while moving the laptop or the head")
+    mv.add_argument("mode", nargs="?", default="portatil", choices=["portatil", "cabeza", "ladeo"])
+    mv.add_argument("--note", default="")
+    fl = sub.add_parser("follow", help="calibrate by looking at your own mouse cursor")
+    fl.add_argument("--note", default="")
+    ed = sub.add_parser("edges", help="follow the screen border, then look away on cue")
+    ed.add_argument("--note", default="")
+    sub.add_parser("bench")
+    tk_ = sub.add_parser("track", help="follow a moving ring with the live dot shown; logs the errors")
+    tk_.add_argument("--note", default="")
+    tk_.add_argument("--no-warmup", action="store_true", help="measure the base model, without warm-up")
+    tk_.add_argument("--rewarm", action="store_true", help="redo the warm-up even if one is <30 min old")
+    sub.add_parser("ir", help="live view of the infrared camera")
+    dt = sub.add_parser("dot")
+    dt.add_argument("--no-learn", action="store_true", help="do not learn from clicks/typing")
+    dt.add_argument("--no-warmup", action="store_true", help="skip the ~45 s posture warm-up")
+    dt.add_argument("--rewarm", action="store_true", help="redo the warm-up even if one is <30 min old")
+    a = ap.parse_args()
+    import os
+    if a.hd:
+        os.environ["EFG_RES"] = "1920x1080"
+    if a.no_train:
+        os.environ["EFG_NO_TRAIN"] = "1"
+
+    if a.cmd == "probe":
+        probe()
+        return
+    if a.cmd == "track":
+        from .track import track
+        track(a.note, warm=not a.no_warmup, rewarm=a.rewarm)
+        return
+    if a.cmd == "ir":
+        from .ircam import view
+        view()
+        return
+    if a.cmd == "bench":
+        from .bench import bench
+        bench()
+        return
+    from . import app
+
+    {"calibrate": lambda: app.calibrate(a.tag, a.note), "train": lambda: app.train(force=True),
+     "eval": lambda: app.evaluate(a.n, a.tag, a.note), "dot": lambda: app.dot(learn=not a.no_learn, warm=not a.no_warmup, rewarm=a.rewarm),
+     "motion": lambda: app.motion(a.mode, note=a.note), "edges": lambda: app.edges(a.note),
+     "follow": lambda: __import__("elementfromgaze.follow", fromlist=["follow"]).follow(a.note)}[a.cmd]()
+
+
+if __name__ == "__main__":
+    main()
