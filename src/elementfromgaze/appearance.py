@@ -65,7 +65,7 @@ def _torch():
     return torch, nn
 
 
-def _build_net(n_mod: int, geo_p: np.ndarray):
+def _build_net(n_mod: int, geo_p: np.ndarray, pose_in: bool = False):
     torch, nn = _torch()
     from .geometry import P_E, P_M, P_PITCH, P_S, P_YAW
 
@@ -88,8 +88,14 @@ def _build_net(n_mod: int, geo_p: np.ndarray):
         def __init__(self):
             super().__init__()
             self.towers = nn.ModuleList([Tower() for _ in range(n_mod)])
-            self.head = nn.Sequential(nn.Linear(128 * n_mod, 64), nn.ReLU(), nn.Linear(64, 2))
+            # pose_in: the eye-in-head angle head also sees the head pose (rotation + position). The
+            # same eye angle LOOKS different from another head pitch / distance (lid occlusion,
+            # foreshortening); without this the head has to guess the posture from the patch alone.
+            self.pose_in = pose_in
+            self.head = nn.Sequential(nn.Linear(128 * n_mod + (12 if pose_in else 0), 64), nn.ReLU(), nn.Linear(64, 2))
             with torch.no_grad():
+                if pose_in:
+                    self.head[0].weight[:, 128 * n_mod:].mul_(0.1)
                 self.head[2].weight.mul_(0.1)
                 self.head[2].bias.copy_(torch.tensor([geo_p[P_YAW][0], geo_p[P_PITCH][0]], dtype=torch.float32))
             g0 = torch.tensor(np.r_[geo_p[P_E], geo_p[P_S], geo_p[P_M]], dtype=torch.float32)
@@ -99,6 +105,8 @@ def _build_net(n_mod: int, geo_p: np.ndarray):
         def forward(self, xs, R, t):
             B = xs[0].shape[0]
             f = torch.cat([tw(x.reshape(B * 2, 1, *x.shape[2:])).reshape(B, 128) for tw, x in zip(self.towers, xs)], 1)
+            if self.pose_in:
+                f = torch.cat([f, R.reshape(B, 9), t / 50.0], 1)
             ang = self.head(f)
             yaw, pitch = ang[:, 0], ang[:, 1]
             cp = torch.cos(pitch)
@@ -154,8 +162,9 @@ _LIVE_THREADS_SET = False
 class AppearanceModel:
     """eye patches (+ head pose from the feature vector) -> screen px."""
 
-    def __init__(self, epochs: int = 20, batch: int = 128, lr: float = 2e-3, seed: int = 0):
+    def __init__(self, epochs: int = 20, batch: int = 128, lr: float = 2e-3, seed: int = 0, pose_in: bool = False):
         self.epochs, self.batch, self.lr, self.seed = epochs, batch, lr, seed
+        self._pose_in = pose_in
 
     def fit(self, P, X: np.ndarray, Y: np.ndarray, log=print) -> "AppearanceModel":
         """P: (N, 2, 44, 72) patches, or a list of them (one per camera, e.g. [colour, IR])."""
@@ -169,7 +178,7 @@ class AppearanceModel:
         Pn = [_norm(p) for p in _mods(P)]
         self._geo_p = GeoModel().fit(X, Y).p
         self._n_mod = len(Pn)
-        self.net = _build_net(self._n_mod, self._geo_p)
+        self.net = _build_net(self._n_mod, self._geo_p, getattr(self, "_pose_in", False))
         opt = torch.optim.AdamW(self.net.parameters(), lr=self.lr, weight_decay=1e-4)
         steps_per = int(np.ceil(len(X) / self.batch))
         sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=self.lr, total_steps=self.epochs * steps_per, pct_start=0.15)
@@ -207,7 +216,7 @@ class AppearanceModel:
         self.__dict__.update(st)
         if isinstance(st.get("net"), dict):
             torch, _ = _torch()
-            self.net = _build_net(st["_n_mod"], st["_geo_p"])
+            self.net = _build_net(st["_n_mod"], st["_geo_p"], st.get("_pose_in", False))
             self.net.load_state_dict({k: torch.from_numpy(v) for k, v in st["net"].items()})
             self.net.eval()
 
