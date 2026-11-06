@@ -41,6 +41,16 @@ WM_QUIT = 0x0012
 LLMHF_INJECTED = 0x01
 
 
+EVENT_OBJECT_LOCATIONCHANGE, OBJID_CARET = 0x800B, -8
+WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS = 0x0000, 0x0002
+WINEVENTPROC = ctypes.WINFUNCTYPE(None, wintypes.HANDLE, wintypes.DWORD, wintypes.HWND, wintypes.LONG,
+                                  wintypes.LONG, wintypes.DWORD, wintypes.DWORD)
+user32.SetWinEventHook.argtypes = [wintypes.UINT, wintypes.UINT, wintypes.HMODULE, WINEVENTPROC, wintypes.DWORD,
+                                   wintypes.DWORD, wintypes.UINT]
+user32.SetWinEventHook.restype = wintypes.HANDLE
+user32.UnhookWinEvent.argtypes = [wintypes.HANDLE]
+
+
 class MSLLHOOKSTRUCT(ctypes.Structure):
     _fields_ = [("pt", wintypes.POINT), ("mouseData", wintypes.DWORD), ("flags", wintypes.DWORD),
                 ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
@@ -93,6 +103,10 @@ class InputWatcher:
     def __init__(self) -> None:
         self.events: "deque[InputEvent]" = deque(maxlen=512)
         self.last_key = -1e9
+        # the system caret, from accessibility events: Chromium (Chrome, Edge, VS Code, Electron) and
+        # modern apps announce it this way, while GetGUIThreadInfo (caret_position) sees nothing there
+        # (0 caret labels in 11 sessions). (x, y, height, t) in screen px, or None
+        self.caret: tuple[float, float, float, float] | None = None
         self._tid = 0
         self._ready = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -118,10 +132,38 @@ class InputWatcher:
                 self.events.append(InputEvent("key", self.last_key))
             return user32.CallNextHookEx(None, n, wparam, lparam)
 
+        acc = {"ok": False}
+        try:
+            import comtypes
+            import comtypes.client
+            from comtypes.automation import VARIANT
+            comtypes.CoInitialize()
+            comtypes.client.GetModule("oleacc.dll")
+            from comtypes.gen.Accessibility import IAccessible
+            acc.update(ok=True, IAccessible=IAccessible, VARIANT=VARIANT, oleacc=ctypes.oledll.oleacc)
+        except Exception:
+            pass
+
+        def caret_proc(hook, event, hwnd, id_object, id_child, thread, ms):
+            if id_object != OBJID_CARET or not acc["ok"]:
+                return                      # location changes of everything else: ignore fast
+            try:
+                pacc = ctypes.POINTER(acc["IAccessible"])()
+                var = acc["VARIANT"]()
+                acc["oleacc"].AccessibleObjectFromEvent(hwnd, id_object, id_child, ctypes.byref(pacc), ctypes.byref(var))
+                left, top, w, h = pacc.accLocation(var)
+                if w >= 0 and 0 < h < 200:
+                    self.caret = (float(left + w / 2), float(top + h / 2), float(h), time.monotonic())
+            except Exception:
+                pass
+
         self._mouse_cb, self._key_cb = HOOKPROC(mouse_proc), HOOKPROC(key_proc)  # keep alive
+        self._caret_cb = WINEVENTPROC(caret_proc)
         hmod = kernel32.GetModuleHandleW(None)
         hm = user32.SetWindowsHookExW(WH_MOUSE_LL, self._mouse_cb, hmod, 0)
         hk = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._key_cb, hmod, 0)
+        hc = user32.SetWinEventHook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE, None, self._caret_cb,
+                                    0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS)
         self._ready.set()
         msg = wintypes.MSG()
         while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
@@ -129,6 +171,8 @@ class InputWatcher:
         for h in (hm, hk):
             if h:
                 user32.UnhookWindowsHookEx(h)
+        if hc:
+            user32.UnhookWinEvent(hc)
 
     def stop(self) -> None:
         if self._tid:

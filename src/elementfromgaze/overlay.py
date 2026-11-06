@@ -425,12 +425,15 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
                 if ev.kind == "click":
                     absorb("click", ev.t, ev.pos)
                 elif ev.t - last_key_label[0] >= KEY_MIN_GAP_S:
-                    pos = caret_position()
+                    ca = watcher.caret        # accessibility caret (Chromium & co.) if it moved with this key
+                    pos = (ca[0], ca[1]) if ca is not None and -0.1 <= ca[3] - ev.t <= 0.45 else caret_position()
                     if pos is None or not (0 <= pos[0] < W and 0 <= pos[1] < H):
                         stats["keys_no_caret"] += 1
                         continue
                     last_key_label[0] = ev.t
-                    absorb("caret", ev.t, pos)
+                    # per-axis noise from the literature (EyeTyper '18): typists' gaze sits near the
+                    # caret in x, much looser in y (they glance below / at the keys)
+                    absorb("caret", ev.t, pos, sd_px=(1.3 * ppd, 2.5 * ppd))
         if server is not None and learn:
             while not server.labels.empty():
                 lab = server.labels.get_nowait()
