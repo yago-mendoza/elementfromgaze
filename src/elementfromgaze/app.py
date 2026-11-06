@@ -563,7 +563,7 @@ def evaluate(n: int = 12, tag: str = "normal", note: str = "") -> None:
 
 
 def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = False, serve: bool = False,
-        show: bool = True, control: bool = False, click: bool = False, guest: bool = False) -> None:
+        show: bool = True, control: bool = False, click: bool = False) -> None:
     from .overlay import dot as _dot
 
-    _dot(radius, learn, warm, rewarm, serve, show, control, click, guest)
+    _dot(radius, learn, warm, rewarm, serve, show, control, click)

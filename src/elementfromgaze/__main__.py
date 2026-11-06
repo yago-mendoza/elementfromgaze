@@ -82,7 +82,6 @@ def main() -> None:
     ct.add_argument("--serve", action="store_true")
     ct.add_argument("--no-warmup", action="store_true")
     ct.add_argument("--rewarm", action="store_true")
-    ct.add_argument("--guest", action="store_true", help="someone else: no learning, nothing saved, no warm-up")
     sub.add_parser("gesture", help="20 s: record normal / squint / blink / smile to set the squint-click threshold")
     dt = sub.add_parser("dot")
     dt.add_argument("--no-learn", action="store_true", help="do not learn from clicks/typing")
@@ -90,7 +89,6 @@ def main() -> None:
     dt.add_argument("--rewarm", action="store_true", help="redo the warm-up even if one is <30 min old")
     dt.add_argument("--serve", action="store_true", help="stream the gaze to web pages (http://127.0.0.1:8770, demo at /demo)")
     dt.add_argument("--no-dot", action="store_true", help="don't draw the red dot (e.g. with --serve)")
-    dt.add_argument("--guest", action="store_true", help="someone else: no learning, nothing saved, no warm-up")
     a = ap.parse_args()
     import os
     if a.hd:
@@ -111,8 +109,7 @@ def main() -> None:
         return
     if a.cmd == "control":
         from . import app as _app
-        _app.dot(warm=not (a.no_warmup or a.guest), rewarm=a.rewarm and not a.guest, serve=a.serve, show=a.dot,
-                 control=True, click=a.click, guest=a.guest)
+        _app.dot(warm=not a.no_warmup, rewarm=a.rewarm, serve=a.serve, show=a.dot, control=True, click=a.click)
         return
     if a.cmd == "gesture":
         from .gesture import gesture
@@ -129,8 +126,7 @@ def main() -> None:
     from . import app
 
     {"calibrate": lambda: app.calibrate(a.tag, a.note), "train": lambda: app.train(force=True),
-     "eval": lambda: app.evaluate(a.n, a.tag, a.note), "dot": lambda: app.dot(learn=not a.no_learn, warm=not (a.no_warmup or a.guest), rewarm=a.rewarm and not a.guest,
-                             serve=a.serve, show=not a.no_dot, guest=a.guest),
+     "eval": lambda: app.evaluate(a.n, a.tag, a.note), "dot": lambda: app.dot(learn=not a.no_learn, warm=not a.no_warmup, rewarm=a.rewarm, serve=a.serve, show=not a.no_dot),
      "motion": lambda: app.motion(a.mode, note=a.note), "edges": lambda: app.edges(a.note),
      "follow": lambda: __import__("elementfromgaze.follow", fromlist=["follow"]).follow(a.note)}[a.cmd]()
 
