@@ -256,7 +256,10 @@
   // =======================================================================================
   // Units: SCREEN px for tracker quantities (converted with map.scale), CLIENT px for the page.
   const RD = {
-    on: true, learn: true,
+    // learn: OFF until validated on real reading. First real test (2026-11-06): the user sat 37%
+    // closer than in the warm-up, the vertical error was ~3.5° (5 lines), and one label at p=0.997
+    // named line 15 for line 19. Highlight only; turn on with efg.readingOptions.learn = true.
+    on: true, learn: false,
     fixT: 36, fixWin: 8, fixMinN: 2, fixMaxGap: 0.25,            // fixations: 3σ of 0.2° jitter (screen px), s
     jitter: 12, rw: 3, sx: 35, margin: 15, dxRw: 3, dxSd0: 30,   // screen px (rw, dxRw per √s)
     gains: [0.88, 0.94, 1, 1.06, 1.12], gainSd: 0.05, gainMix: 0.01,
@@ -718,8 +721,22 @@
     const n = c.length;
     return { t0: c[0].t, t1: c[n - 1].t, lt0: c[0].lt, lt1: c[n - 1].lt, x: x / n, y: y / n, sx: rx / n, sy: ry / n, n };
   }
+  // the frame noise is measured, not assumed: the agent's 0.2° (36 px threshold) cut real 250 ms
+  // fixations into 50-90 ms pieces (real frame-to-frame step: median 30 px, p75 57 px)
+  const noise = { steps: [], prev: null, T: RD.fixT };
   function fixPush(s) {
-    const T = RD.fixT / map.scale;
+    if (noise.prev) {
+      noise.steps.push(Math.hypot(s.x - noise.prev.x, s.y - noise.prev.y) * map.scale);
+      if (noise.steps.length > 300) noise.steps.shift();
+      if (noise.steps.length >= 60 && noise.steps.length % 15 === 0) {
+        const st = noise.steps.slice().sort((a, b) => a - b), med = st[st.length >> 1];
+        // step of a 2-D Gaussian with per-axis sd σ: Rayleigh(σ√2), median 1.665σ
+        noise.T = Math.max(RD.fixT, Math.min(120, 3 * med / 1.665));
+        RD.fixTLive = Math.round(noise.T);            // logged with the read test
+      }
+    }
+    noise.prev = s;
+    const T = noise.T / map.scale;
     let out = null;
     if (fx.cur.length && s.t - fx.cur[fx.cur.length - 1].t > RD.fixMaxGap) out = fixClose();
     if (!fx.cur.length) { fx.cur = [s]; return out; }

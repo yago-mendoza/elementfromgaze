@@ -215,6 +215,38 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
             gen["n"] += 1
         print(f"   empujón ({dx:+.0f}, {dy:+.0f}) px · {aff.describe()}")
 
+    def current_pose() -> dict | None:
+        if len(posture) < 100:
+            return None
+        a = np.array(posture)
+        return {"pitch": float(np.median(a[:, 0])), "yaw": float(np.median(a[:, 1])),
+                "eye_w": float(np.median(a[:, 2])), "lid": float(np.median(a[:, 3]))}
+
+    def bank_this_posture() -> bool:
+        """After a recheck: keep (current network + this correction) for this posture, so the next
+        time you sit like this the bank picks it up with no recalibration."""
+        import copy
+
+        from .track import _bank_dir
+        pose = current_pose()
+        if pose is None or not warm:
+            return False
+        m = copy.copy(state["model"])
+        m.start_aff, m.warm_pose = aff.state(), pose
+        d = _bank_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        path = d / f"warm_{time.strftime('%Y%m%d-%H%M%S')}.pkl"
+        m.save(path)
+        bank.append((pose, path))
+        wp["pose"] = pose
+        return True
+
+    def start_recheck(auto: bool = False) -> None:
+        if recheck["on"]:
+            return
+        recheck.update(on=True, i=0, t0=time.monotonic(), got=[], res=[])
+        print("   recalibración rápida" + (" automática" if auto else "") + ": mira cada botón naranja")
+
     def recheck_tick(now: float) -> None:
         """Ctrl+Alt+R: 5 buttons, ~7 s, without leaving `dot`. Their residuals replace the global
         correction (same as the warm-up's 9-button check)."""
@@ -234,7 +266,9 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
                     desc = aff.describe()
                 e = np.median([np.linalg.norm(p - lab) for p, lab, _ in res]) / screen.px_per_degree()
                 print(f"   recalibrado con {len(res)} botones (error antes {e:.2f}°) · {desc}")
-                toaster.show("Recalibrado", f"{len(res)} botones · el error era {e:.1f}°", "ok", 3500)
+                saved = bank_this_posture()
+                toaster.show("Recalibrado", f"{len(res)} botones · el error era {e:.1f}°"
+                             + (" · postura guardada" if saved else ""), "ok", 3500)
             else:
                 print("   recalibración: no vi bien tus ojos, sin cambios")
                 toaster.show("Recalibración sin cambios", "No vi bien tus ojos", "warn", 3500)
@@ -380,8 +414,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
             if pressed(key):
                 nudge(dx, dy)
         if pressed("r") and not recheck["on"]:
-            recheck.update(on=True, i=0, t0=now, got=[], res=[])
-            print("   recalibración rápida: mira cada botón naranja")
+            start_recheck()
         if recheck["on"]:
             recheck_tick(now)
         if watcher:
@@ -436,12 +469,14 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
                                  f"{path.stem[14:16]}:{path.stem[16:18]}", "info", 3500)
             if why and now - drift["warned"] > 90:
                 drift["warned"] = now
-                msg = ("Postura nueva (" + ", ".join(why) + ").  Ctrl+Alt+R recalibra en 7 s · "
-                       "`--rewarm` la añade al banco")
-                print("   ⚠", msg)
+                # a new posture: the 2026-11-06 reading test ran 37% closer than the warm-up with a
+                # 3.5° vertical error and only a toast nobody acted on. So recalibrate by itself
+                # (5 buttons, 7 s) and bank the posture, after a short heads-up.
+                print("   ⚠ postura nueva (" + ", ".join(why) + "): recalibro en 3 s")
                 gen["n"] += 1
                 toaster.show("Postura nueva: " + ", ".join(why),
-                             "Ctrl+Alt+R recalibra en 7 s  ·  con --rewarm la guardo en el banco", "warn", 7000)
+                             "Recalibro en 3 s: mira los 5 botones naranjas (7 s). Después la recuerdo.", "warn", 3000)
+                root.after(3000, lambda: start_recheck(auto=True))
         p = latest.get("p")
         looking_away = now - latest.get("off_t", -1e9) < 0.25
         dt = now - tick_t[0]
