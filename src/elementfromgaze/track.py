@@ -183,6 +183,22 @@ def track(note: str = "", warm: bool = True, rewarm: bool = False) -> None:
 
 
 # ---------------------------------------------------------------------------
+HEAD_S, HEAD_AMP = 8.5, 12.0     # head-turn segment: seconds, guide amplitude (deg)
+
+
+def head_target(t: float) -> tuple[float, float]:
+    """Guide for the head turn: (yaw, pitch) in degrees. A smooth horizontal swing, then vertical,
+    ~3.6 s per axis, starting and ending at rest."""
+    import math
+    t = max(0.0, t - 0.6)
+    if t < 3.6:
+        return HEAD_AMP * math.sin(2 * math.pi * t / 3.6), 0.0
+    t -= 3.6
+    if t < 3.6:
+        return 0.0, 0.75 * HEAD_AMP * math.sin(2 * math.pi * t / 3.6)
+    return 0.0, 0.0
+
+
 CHECK_POINTS = [(fx, fy) for fy in (0.08, 0.5, 0.92) for fx in (0.08, 0.5, 0.92)]
 CHECK_S, CHECK_SETTLE_S = 1.6, 0.6
 
@@ -193,7 +209,7 @@ class WarmupStage(Stage):
     network still gets wrong on real fixations (on `targets` it left a 1.5° vertical bias), which
     seeds the global correction of `efg dot` so it is right from the first second, before any click."""
 
-    title = "Calentamiento (≈75 s)"
+    title = "Calentamiento (≈78 s)"
     intro_text = ("Sigue con la mirada el ARO; al final, mira cada BOTÓN que se ilumine.\n"
                   "Siéntate como vas a usar el ordenador: así el modelo se ajusta a tu postura de ahora.\n\n"
                   "ESPACIO para empezar · ESC para saltarlo")
@@ -208,15 +224,43 @@ class WarmupStage(Stage):
             segs.append(Segment("fix", 1.9, (lambda t, x=fx * W, y=fy * H: (x, y)), 0.7, bg=BGS[k % 2]))
         # head turns while fixating: the dot drifted ~2-3 px per degree of head yaw (measured on the
         # head-motion sessions); 6 s of this in the CURRENT posture teaches the network to hold still
-        segs.append(message("Mira el punto y gira la cabeza despacio: izquierda, derecha, arriba, abajo.", 2.2))
-        segs.append(Segment("vor", 6.5, (lambda t, x=W / 2, y=H * 0.45: (x, y)), 0.6, bg=BGS[0]))
+        segs.append(message("Mira el aro todo el rato y mueve la cabeza: lleva tu marca naranja al punto azul.", 2.6))
+        segs.append(Segment("vor", HEAD_S, (lambda t, x=W / 2, y=H * 0.45: (x, y)), 0.6, bg=BGS[0]))
         pts = CHECK_POINTS[:]
         random.shuffle(pts)
         segs.append(message("Ahora mira cada botón que se ilumine.", 1.8))
         for fx, fy in pts:
             segs.append(Segment("check", CHECK_S, (lambda t, x=fx * W, y=fy * H: (x, y)), CHECK_SETTLE_S, bg=INTRO_BG))
         self.btn_h = 1.5 * screen.px_per_degree()
+        self.head = {"base": [], "now": None, "pairs": []}      # live head pose for the head-turn guide
         super().__init__(segs)
+
+    def on_sample(self, s, target, seg, valid) -> None:
+        if seg.phase != "vor":
+            self.head["base"].clear()
+            return
+        from .features import head_euler
+        he = np.asarray(head_euler(s.matrix), float)[:2]          # pitch, yaw (deg)
+        if len(self.head["base"]) < 6:
+            self.head["base"].append(he)
+            return
+        rel = he - np.median(self.head["base"], 0)
+        self.head["now"] = rel
+        lt = s.t - self.started_at - self._bounds[self.segments.index(seg)]
+        self.head["pairs"].append((head_target(lt), rel))
+
+    def _head_signs(self) -> np.ndarray:
+        """Which way is 'left' for MediaPipe's angles vs the screen: learned from the first second of
+        following the guide (flip an axis whose actual motion anti-correlates with the guide)."""
+        P = self.head["pairs"]
+        sg = np.ones(2)
+        if len(P) > 15:
+            d = np.array([p[0] for p in P])           # (yaw, pitch) guide
+            a = np.array([p[1][::-1] for p in P])     # (yaw, pitch) actual
+            for i in range(2):
+                if d[:, i].std() > 1 and a[:, i].std() > 0.5 and np.corrcoef(d[:, i], a[:, i])[0, 1] < -0.3:
+                    sg[i] = -1
+        return sg
 
     def _draw(self, seg: Segment, lt: float) -> None:
         c = self.canvas
@@ -231,6 +275,21 @@ class WarmupStage(Stage):
             c.create_text(x, y, text="Aceptar", fill="#1b1b1b", font=("Segoe UI", int(h * 0.3)), tags="target")
             return
         ink = _ink(seg.bg)
+        if seg.phase == "vor":         # head-turn guide: where to point the nose, and where it points
+            R = 150
+            c.create_oval(x - R, y - R, x + R, y + R, outline="#2c3036", width=2, tags="target")
+            c.create_line(x - R, y, x + R, y, fill="#2c3036", tags="target")
+            c.create_line(x, y - R, x, y + R, fill="#2c3036", tags="target")
+            gy, gp = head_target(lt)
+            gx_, gy_ = x + gy / HEAD_AMP * R, y - gp / HEAD_AMP * R
+            c.create_oval(gx_ - 11, gy_ - 11, gx_ + 11, gy_ + 11, fill="#4fc3ff", outline="", tags="target")
+            if self.head["now"] is not None:
+                sg = self._head_signs()
+                ay, ap = self.head["now"][1] * sg[0], self.head["now"][0] * sg[1]
+                ax_, ay_ = x + np.clip(ay / HEAD_AMP, -1.3, 1.3) * R, y - np.clip(ap / HEAD_AMP, -1.3, 1.3) * R
+                c.create_oval(ax_ - 14, ay_ - 14, ax_ + 14, ay_ + 14, outline="#e8a33d", width=3, tags="target")
+            c.create_text(x, y + R + 34, text="mira el aro blanco · mueve la cabeza para llevar el círculo naranja al punto azul",
+                          fill="#8b9098", font=("Segoe UI", 13), tags="target")
         c.create_oval(x - 15, y - 15, x + 15, y + 15, outline=ink, width=3, tags="target")
         c.create_oval(x - 2, y - 2, x + 2, y + 2, fill=ink, outline="", tags="target")
 
