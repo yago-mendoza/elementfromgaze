@@ -93,6 +93,10 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     typing = {"last_key": -1e9}
     lock = threading.Lock()
     recent: "deque[tuple]" = deque(maxlen=60)   # (t, base, h, sample, blink)
+    posture: "deque[tuple]" = deque(maxlen=400)  # ~20 s of (pitch, yaw, eye width, lid) for the drift check
+    warm_pose = getattr(model, "warm_pose", None)
+    from .track import pose_drift      # here, not at the top: track imports overlay
+    labels_hist: "deque[tuple]" = deque(maxlen=40)   # (feature rows, patch rows, h, pos, t, conf) to re-fit after a fine-tune
     latest: dict = {}
     stats = {"keys_no_caret": 0, "labels": 0}
     rec = Recorder()
@@ -109,6 +113,9 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         held = is_blink or not s.eyes_ok
         if recheck["on"] and not held and time.monotonic() - recheck["t0"] >= RECHECK_SETTLE_S:
             recheck["got"].append(base)
+        if not held:
+            he = head_euler(s.matrix)
+            posture.append((he[0], he[1], float(s.features[6]), lid_opening(s)))
         with lock:
             recent.append((s.t, base, h, s, held))
             a = aff.apply(base)
@@ -241,10 +248,18 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
                                       seed=tune["fits"])
                 m = copy.copy(state["model"])
                 m.appearance = tuned
+                # Re-fit the fast correctors with the NEW network instead of wiping them: the fine-tune
+                # (heavy replay, few steps) absorbs only part of a posture bias, and wiping threw the
+                # rest away after every ~6 clicks.
+                hist = list(labels_hist)
+                refit = [(np.median(tuned.predict(P, X), 0), h, pos, t, conf) for X, P, h, pos, t, conf in hist]
                 with lock:
                     state["model"] = m
                     aff.forget()
                     corr.forget()
+                    for p, h, pos, t, conf in refit:
+                        if aff.add(p, pos, t, conf):
+                            corr.add(aff.apply(p), h, pos, t, conf)
                 tune["fits"] += 1
             finally:
                 tune["last"] = time.monotonic()
@@ -256,6 +271,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     watcher = InputWatcher().start() if learn else None
     last_key_label = [0.0]
     tick_t = [time.monotonic()]
+    drift = {"checked": time.monotonic(), "warned": -1e9}
     last_print = [time.monotonic()]
     print("punto rojo activo · aprende de clics y escritura" if learn else "punto rojo activo",
           "· Ctrl+Alt+G salir · Ctrl+Alt+flechas empujar · Ctrl+Alt+R recalibrar (5 botones)")
@@ -272,6 +288,9 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
             ok = aff.add(p, pos, t_ev, conf)
             if ok:
                 corr.add(aff.apply(p), h, pos, t_ev, conf)
+                if rows[0][3].patches is not None:
+                    labels_hist.append((np.array([r[3].features for r in rows]), np.array([r[3].patches for r in rows]),
+                                        h, pos, t_ev, conf))
         seg = Segment(kind, 0.0, None)
         idx = stats["labels"]
         stats["labels"] += 1
@@ -319,6 +338,20 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
                 if 0 <= lab["x"] < W and 0 <= lab["y"] < H and 0 < lab["t1"] - lab["t0"] <= 2.0:
                     absorb("gaze", lab["t1"], (lab["x"], lab["y"]), (lab["t0"] - lab["t1"], 0.0, lab["conf"]))
         maybe_tune(now)
+        if warm_pose and now - drift["checked"] > 5 and len(posture) > 200:
+            drift["checked"] = now
+            a = np.array(posture)
+            cur = {"pitch": float(np.median(a[:, 0])), "yaw": float(np.median(a[:, 1])),
+                   "eye_w": float(np.median(a[:, 2])), "lid": float(np.median(a[:, 3]))}
+            why = pose_drift(cur, warm_pose)
+            if why and now - drift["warned"] > 90:
+                drift["warned"] = now
+                msg = "Postura distinta a la del calentamiento: " + ", ".join(why) + ".  Ctrl+Alt+R recalibra en 7 s"
+                print("   ⚠", msg)
+                canvas.delete("toast")
+                canvas.create_rectangle(W / 2 - 430, 14, W / 2 + 430, 54, fill="#202328", outline="#e8a33d", width=2, tags="toast")
+                canvas.create_text(W / 2, 34, text=msg, fill="#f0f0f0", font=("Segoe UI", 12), tags="toast")
+                root.after(7000, lambda: canvas.delete("toast"))
         p = latest.get("p")
         looking_away = now - latest.get("off_t", -1e9) < 0.25
         dt = now - tick_t[0]

@@ -259,6 +259,28 @@ def check_correction(model: GazeModel, rec, W, H) -> dict | None:
     return aff.state()
 
 
+def pose_summary(head_euler, features) -> dict:
+    """What the warm-up was fitted to: head pitch/yaw (deg), eye width (distance proxy), lid opening."""
+    return {"pitch": float(np.median(head_euler[:, 0])), "yaw": float(np.median(head_euler[:, 1])),
+            "eye_w": float(np.median(features[:, 6])), "lid": float(np.median((features[:, 2] + features[:, 5]) / 2))}
+
+
+def pose_drift(now: dict, ref: dict) -> list[str]:
+    """Reasons the current posture no longer matches the warm-up. Thresholds from 2026-11-06: a
+    reused warm-up with pitch -13 -> -21°, eye width -10%, lids -12% gave 2.35° instead of 0.9°."""
+    out = []
+    if abs(now["pitch"] - ref["pitch"]) > 5:
+        out.append(f"cabeza {'más baja' if now['pitch'] < ref['pitch'] else 'más alta'} ({now['pitch'] - ref['pitch']:+.0f}°)")
+    if abs(now["yaw"] - ref["yaw"]) > 6:
+        out.append(f"cabeza girada ({now['yaw'] - ref['yaw']:+.0f}°)")
+    r = now["eye_w"] / ref["eye_w"]
+    if abs(r - 1) > 0.07:
+        out.append("más lejos" if r < 1 else "más cerca")
+    if now["lid"] / ref["lid"] < 0.85:
+        out.append("ojos más cerrados")
+    return out
+
+
 WARM_MAX_AGE_S = 30 * 60
 
 
@@ -274,9 +296,12 @@ def warm_model(model: GazeModel) -> GazeModel:
     p = _warm_path()
     if (p.exists() and time.time() - p.stat().st_mtime < WARM_MAX_AGE_S
             and p.stat().st_mtime > USER_MODEL.stat().st_mtime):      # newer than the base model
+        m = GazeModel.load(p)
+        if getattr(m, "warm_pose", None) is None:      # pre-drift-check warm-up: redo it
+            return warmup(model)
         age = (time.time() - p.stat().st_mtime) / 60
-        print(f"uso el calentamiento de hace {age:.0f} min (si cambiaste de postura: --rewarm)")
-        return GazeModel.load(p)
+        print(f"uso el calentamiento de hace {age:.0f} min (si cambiaste de postura: --rewarm; `dot` avisa si te mueves)")
+        return m
     return warmup(model)
 
 
@@ -316,6 +341,7 @@ def warmup(model: GazeModel, rounds: int = 8) -> GazeModel:   # 8 > 4: 1.45° ->
     tuned = copy.copy(model)
     tuned.appearance = app
     tuned.start_aff = check_correction(tuned, stage.rec, W, H)
+    tuned.warm_pose = pose_summary(np.array(c["head_euler"])[ok], np.array(c["features"])[ok])
     print(f"listo en {time.monotonic() - t0:.0f}s")
     stage.rec.save(W, H, "warmup", "calentamiento de `efg dot`", stage.worker.stats())
     tuned.save(_warm_path())

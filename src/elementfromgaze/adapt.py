@@ -108,10 +108,13 @@ class AffineKalman:
     # get a prior sd of 0.1: on the `targets` session (vertical gain 0.85 after warm-up) clicks took
     # the per-trial error 1.67° -> 1.05° shift-only -> 0.97° with these gains, while 6 clicks
     # clustered in a 150 px blob on a perfect model cost no more than shift-only (1.20° vs 1.23°
-    # worst case); sd 0.2 was 0.92° but 1.70° in that stress test.
-    def __init__(self, W: int, H: int, label_sd_px: float = 120.0, prior_gain_sd: float = 0.1,
+    # worst case); sd 0.2 was 0.92° but 1.70° in that stress test. In real use (23 clicks, a posture
+    # change, heavy-tailed labels: clicks while looking elsewhere, up to 8° off) sd 0.1 HURT
+    # (2.67° vs 2.35° shift-only), 0.05 was neutral (2.37°): 0.05 it is, and the absolute gate went
+    # 650 -> 400 px (6.5°) so those clicks are rejected.
+    def __init__(self, W: int, H: int, label_sd_px: float = 120.0, prior_gain_sd: float = 0.05,
                  prior_shift_sd: float = 0.2, forget_s: float = 600.0, gate: float = 5.0,
-                 abs_gate_px: float = 650.0):
+                 abs_gate_px: float = 400.0):
         self.W, self.H = float(W), float(H)
         self.theta = np.array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0])
         self.P0 = np.diag([prior_gain_sd ** 2, 1e-12, prior_shift_sd ** 2, 1e-12, prior_gain_sd ** 2, prior_shift_sd ** 2])
