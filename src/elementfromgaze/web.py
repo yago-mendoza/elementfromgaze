@@ -5,6 +5,7 @@
                 cx/cy = OS cursor, which the page uses to learn its own screen -> viewport mapping)
   GET /efg.js   the browser side: window.efg.elementFromGaze(), gaze events, debug overlay
   GET /demo     a test page with buttons, a pie menu and text
+  POST /log     the demo's test results -> data/web_log.jsonl
 
 Only binds 127.0.0.1. Standard library only: no extra dependency.
 """
@@ -22,8 +23,9 @@ STATIC = Path(__file__).with_name("web")
 
 
 class GazeServer:
-    def __init__(self, port: int = PORT):
+    def __init__(self, port: int = PORT, log_path: Path | None = None):
         self.clients: list[queue.Queue] = []
+        self.log_path = log_path
         self.lock = threading.Lock()
         srv = self
 
@@ -40,6 +42,21 @@ class GazeServer:
                 self.end_headers()
 
             def do_OPTIONS(self):
+                self._head(204, "text/plain")
+
+            def do_POST(self):
+                if self.path.split("?")[0] != "/log" or srv.log_path is None:
+                    self._head(404, "text/plain")
+                    return
+                n = min(int(self.headers.get("Content-Length") or 0), 1_000_000)
+                body = self.rfile.read(n)
+                try:
+                    rec = json.loads(body)
+                except ValueError:
+                    self._head(400, "text/plain")
+                    return
+                with srv.lock, open(srv.log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
                 self._head(204, "text/plain")
 
             def do_GET(self):

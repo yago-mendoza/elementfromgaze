@@ -25,12 +25,16 @@ from . import screen
 from .adapt import AffineKalman, ResidualCorrector, pose_vector
 from .app import Recorder, Segment, lid_opening
 from .features import Sample, head_euler
-from .filters import BlinkDetector, FixationFilter, GazeSmoother
+from .filters import BlinkDetector, FixationFilter, GazeSmoother, Spring2D
 from .implicit import InputWatcher, caret_position, cursor_position
 from .tracker import USER_MODEL, FeatureWorker, GazeModel
 
 TRANSPARENT = "#010101"
 VK = {"ctrl": 0x11, "alt": 0x12, "g": 0x47}
+VK_KEYS = {"left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28, "r": 0x52}
+NUDGE_PX = 12            # Ctrl+Alt+arrow: move the dot this much (your "+n")
+RECHECK_POINTS = [(0.5, 0.5), (0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9)]
+RECHECK_S, RECHECK_SETTLE_S = 1.4, 0.5
 LABEL_DELAY_S = 0.12
 WINDOWS = {"click": (-0.35, 0.05, 1.0), "caret": (-0.25, 0.10, 0.6)}  # from, to, confidence
 KEY_MIN_GAP_S = 0.35
@@ -45,6 +49,12 @@ TUNE_MIN_GAP_S = 20.0
 def _hotkey_down() -> bool:
     k = ctypes.windll.user32.GetAsyncKeyState
     return all(k(v) & 0x8000 for v in VK.values())
+
+
+def _combo(key: str) -> bool:
+    """Ctrl+Alt+<key> held right now."""
+    k = ctypes.windll.user32.GetAsyncKeyState
+    return bool(k(VK["ctrl"]) & 0x8000 and k(VK["alt"]) & 0x8000 and k(VK_KEYS[key]) & 0x8000)
 
 
 SD_DEG = 0.9             # per-fixation error after warm-up + check (targets, 2026-11-06): sent to web pages
@@ -64,7 +74,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     server = None
     if serve:
         from .web import GazeServer
-        server = GazeServer()
+        server = GazeServer(log_path=USER_MODEL.parent / "web_log.jsonl")
         print(f"servidor de mirada en {server.url} · página de prueba: {server.url}/demo")
     sd_px = SD_DEG * screen.px_per_degree()
 
@@ -93,6 +103,8 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         h = pose_vector(head_euler(s.matrix), float(s.features[6]))
         is_blink = blinker(lid_opening(s), s.eye_blink)
         held = is_blink or not s.eyes_ok
+        if recheck["on"] and not held and time.monotonic() - recheck["t0"] >= RECHECK_SETTLE_S:
+            recheck["got"].append(base)
         with lock:
             recent.append((s.t, base, h, s, held))
             a = aff.apply(base)
@@ -130,6 +142,53 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     canvas = tk.Canvas(root, bg=TRANSPARENT, highlightthickness=0)
     canvas.pack(fill="both", expand=True)
     dot_id = canvas.create_oval(0, 0, 0, 0, fill="#ff2d20", outline="#ffffff", width=2, state="hidden")
+    spring = Spring2D(omega=28.0)        # display physics: glide, don't teleport
+    keys_prev: dict = {}
+    recheck = {"on": False, "i": 0, "t0": 0.0, "got": [], "res": []}
+
+    def pressed(key: str) -> bool:      # rising edge of Ctrl+Alt+key
+        now_down = _combo(key)
+        was = keys_prev.get(key, False)
+        keys_prev[key] = now_down
+        return now_down and not was
+
+    def nudge(dx: float, dy: float) -> None:
+        with lock:
+            aff.theta[2] += dx / W
+            aff.theta[5] += dy / H
+        print(f"   empujón ({dx:+.0f}, {dy:+.0f}) px · {aff.describe()}")
+
+    def recheck_tick(now: float) -> None:
+        """Ctrl+Alt+R: 5 buttons, ~7 s, without leaving `dot`. Their residuals replace the global
+        correction (same as the warm-up's 9-button check)."""
+        canvas.delete("recheck")
+        i = recheck["i"]
+        if i >= len(RECHECK_POINTS):
+            res = recheck["res"]
+            recheck["on"] = False
+            if len(res) >= 3:
+                with lock:
+                    aff.forget()
+                    corr.forget()
+                    for k, (p, lab, t) in enumerate(res):
+                        aff.add(p, lab, t)
+                    desc = aff.describe()
+                e = np.median([np.linalg.norm(p - lab) for p, lab, _ in res]) / screen.px_per_degree()
+                print(f"   recalibrado con {len(res)} botones (error antes {e:.2f}°) · {desc}")
+            else:
+                print("   recalibración: no vi bien tus ojos, sin cambios")
+            return
+        fx, fy = RECHECK_POINTS[i]
+        x, y = fx * W, fy * H
+        h = 1.5 * screen.px_per_degree()
+        canvas.create_rectangle(x - h, y - h / 2, x + h, y + h / 2, fill="#e8a33d", outline="#ffd27a", width=2, tags="recheck")
+        canvas.create_text(x, y, text="mira aquí", fill="#1b1b1b", font=("Segoe UI", int(h * 0.28)), tags="recheck")
+        lt = now - recheck["t0"]
+        if lt >= RECHECK_S:
+            if len(recheck["got"]) >= 5:
+                recheck["res"].append((np.median(recheck["got"], 0), np.array([x, y]), now))
+            recheck["i"] += 1
+            recheck["t0"], recheck["got"] = now, []
     root.update_idletasks()
     screen.make_click_through(ctypes.windll.user32.GetParent(root.winfo_id()))
 
@@ -192,9 +251,10 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     worker = FeatureWorker(on_sample)
     watcher = InputWatcher().start() if learn else None
     last_key_label = [0.0]
+    tick_t = [time.monotonic()]
     last_print = [time.monotonic()]
     print("punto rojo activo · aprende de clics y escritura" if learn else "punto rojo activo",
-          "· Ctrl+Alt+G para salir")
+          "· Ctrl+Alt+G salir · Ctrl+Alt+flechas empujar · Ctrl+Alt+R recalibrar (5 botones)")
 
     def absorb(kind: str, t_ev: float, pos) -> None:
         lo, hi, conf = WINDOWS[kind]
@@ -225,6 +285,14 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
             root.destroy()
             return
         now = time.monotonic()
+        for key, (dx, dy) in {"left": (-NUDGE_PX, 0), "right": (NUDGE_PX, 0), "up": (0, -NUDGE_PX), "down": (0, NUDGE_PX)}.items():
+            if pressed(key):
+                nudge(dx, dy)
+        if pressed("r") and not recheck["on"]:
+            recheck.update(on=True, i=0, t0=now, got=[], res=[])
+            print("   recalibración rápida: mira cada botón naranja")
+        if recheck["on"]:
+            recheck_tick(now)
         if watcher:
             for ev in watcher.drain_ready(now, LABEL_DELAY_S):
                 if ev.kind != "click":
@@ -241,8 +309,12 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         maybe_tune(now)
         p = latest.get("p")
         looking_away = now - latest.get("off_t", -1e9) < 0.25
-        if show and p is not None and now - latest["t"] < 0.6 and not looking_away:
-            x, y = p
+        dt = now - tick_t[0]
+        tick_t[0] = now
+        if show and p is not None and now - latest["t"] < 0.6 and not looking_away and not recheck["on"]:
+            if canvas.itemcget(dot_id, "state") == "hidden":
+                spring.reset(p)          # reappearing: start where the gaze is, don't fly in
+            x, y = spring(p, dt)
             canvas.coords(dot_id, x - radius, y - radius, x + radius, y + radius)
             canvas.itemconfigure(dot_id, state="normal")
         else:

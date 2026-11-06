@@ -93,7 +93,7 @@
       t.classList.add("lit");
       await new Promise((r) => setTimeout(r, 1400));
       const g = efg.elementFromGaze();
-      rows.push({ t, ok: !!g && g.element === t, kind: t.tagName === "path" ? "menú" : t.className });
+      rows.push({ t, got: g && g.element, ok: !!g && g.element === t, kind: t.tagName === "path" ? "menú" : t.className });
       t.classList.remove("lit");
       await new Promise((r) => setTimeout(r, 250));
     }
@@ -102,6 +102,11 @@
     const nm = { l: "botón grande", m: "botón medio", s: "botón pequeño", "menú": "porción del menú" };
     res.textContent = `aciertos ${rows.filter((r) => r.ok).length}/20\n` +
       Object.entries(by).map(([k, v]) => `${(nm[k] || k).padEnd(17)} ${v.filter(Boolean).length}/${v.length}`).join("\n");
+    // send the result to the local server (data/web_log.jsonl) so it can be analysed
+    const lab = (el) => el ? (el.getAttribute("aria-label") || el.textContent).trim() : null;
+    fetch(efg.origin + "/log", { method: "POST", body: JSON.stringify({ kind: "demo_test", when: new Date().toISOString(),
+      trials: rows.map((r) => ({ target: lab(r.t), kind: r.kind, ok: r.ok, got: lab(r.got) })), mapping: efg.mapping,
+      viewport: [innerWidth, innerHeight, devicePixelRatio] }) }).catch(() => {});
   };
 </script>
 </body>

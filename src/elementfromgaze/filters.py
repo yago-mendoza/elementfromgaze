@@ -258,3 +258,31 @@ class GazeSmoother:
         if self.still_since is None:
             self.still_since = t
         return f if t - self.still_since >= self.still_s else k
+
+
+class Spring2D:
+    """Display layer: a critically damped spring that chases the estimate. Still during fixations,
+    a ~150 ms glide on saccades, never overshoots, never teleports; it runs at the display rate,
+    so it also interpolates between the ~30 fps camera frames. Exact solution of
+    x'' = w^2 (target - x) - 2 w x', so any frame time is stable."""
+
+    def __init__(self, omega: float = 28.0):
+        self.omega = omega
+        self.p: np.ndarray | None = None
+        self.v = np.zeros(2)
+
+    def reset(self, p) -> None:
+        self.p, self.v = np.asarray(p, float).copy(), np.zeros(2)
+
+    def __call__(self, target, dt: float) -> np.ndarray:
+        target = np.asarray(target, float)
+        if self.p is None:
+            self.reset(target)
+            return self.p.copy()
+        w, dt = self.omega, min(max(dt, 0.0), 0.1)
+        e0 = self.p - target
+        c = self.v + w * e0
+        ex = math.exp(-w * dt)
+        self.p = target + (e0 + c * dt) * ex
+        self.v = (self.v - w * c * dt) * ex
+        return self.p.copy()

@@ -21,7 +21,9 @@
   const SELECTOR = 'a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],' +
     '[role=menuitem],[role=tab],[role=option],[role=checkbox],[role=radio],[role=slider],[onclick],[data-gaze],' +
     '[tabindex]:not([tabindex="-1"])';
-  const opt = { sdScale: 1.0, tau: 0.25, minP: 0.4, dwellMs: 600, selector: SELECTOR };
+  // hysteresis: entering needs minP, staying needs only stayP, and switching away needs switchP AND
+  // a clear lead over the current one -> no flicker between neighbours
+  const opt = { sdScale: 1.0, tau: 0.25, minP: 0.4, stayP: 0.22, switchP: 0.5, lead: 1.3, dwellMs: 600, selector: SELECTOR };
 
   // 48 fixed points of a unit 2-D Gaussian (sunflower pattern: even, deterministic -> no flicker)
   const NORM = [];
@@ -109,7 +111,10 @@
   function decide(now) {
     let best = null, bp = 0;
     for (const [k, v] of scores) if (v > bp) { best = k; bp = v; }
-    const next = bp >= opt.minP && best.isConnected ? best : null;
+    const cp = current && current.isConnected ? scores.get(current) || 0 : 0;
+    let next;
+    if (cp >= opt.stayP) next = best !== current && bp >= opt.switchP && bp > cp * opt.lead ? best : current;
+    else next = best && bp >= opt.minP && best.isConnected ? best : null;
     if (next !== current) {
       if (current) {
         current.removeAttribute("data-gazed");
@@ -126,8 +131,7 @@
       dwellFired = true;
       current.dispatchEvent(new CustomEvent("gazedwell", { bubbles: true, detail: { p: bp, dwellMs: now - since } }));
     }
-    current_p = bp;
-    if (dbg.on) drawDebug();
+    current_p = current ? scores.get(current) || 0 : 0;
   }
   let current_p = 0;
 
@@ -138,17 +142,43 @@
     if (dotEl) return;
     const mk = (css) => { const d = document.createElement("div"); d.style.cssText = "position:fixed;pointer-events:none;z-index:2147483647;" + css; document.documentElement.appendChild(d); return d; };
     dotEl = mk("width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;background:#ff2d20;opacity:.75;");
-    boxEl = mk("border:3px solid #4fc3ff;border-radius:6px;box-sizing:border-box;transition:all 60ms linear;");
+    boxEl = mk("border:3px solid #4fc3ff;border-radius:8px;box-sizing:border-box;box-shadow:0 0 18px #4fc3ff66;");
     tagEl = mk("left:8px;bottom:8px;font:12px/1.3 Consolas,monospace;color:#fff;background:#000a;padding:4px 8px;border-radius:4px;");
   }
-  function drawDebug() {
+  // critically damped spring, exact step: still on fixations, ~150 ms glide on saccades, no overshoot
+  function spring(s, target, dt, w) {
+    if (!s.p) { s.p = target.slice(); s.v = target.map(() => 0); return s.p; }
+    const ex = Math.exp(-w * dt);
+    for (let i = 0; i < target.length; i++) {
+      const e0 = s.p[i] - target[i], c = s.v[i] + w * e0;
+      s.p[i] = target[i] + (e0 + c * dt) * ex;
+      s.v[i] = (s.v[i] - w * c * dt) * ex;
+    }
+    return s.p;
+  }
+  const sDot = {}, sBox = {};
+  let rafT = 0, boxShown = false;
+  function frame(t) {
+    const dt = rafT ? Math.min((t - rafT) / 1000, 0.1) : 0.016;
+    rafT = t;
+    if (dbg.on) drawDebug(dt);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  function drawDebug(dt = 0.016) {
     ensureDebug();
     dotEl.style.display = gaze ? "block" : "none";
-    if (gaze) { dotEl.style.left = gaze.x + "px"; dotEl.style.top = gaze.y + "px"; }
+    if (gaze) {
+      if (dotEl.dataset.hidden) { sDot.p = null; delete dotEl.dataset.hidden; }
+      const [x, y] = spring(sDot, [gaze.x, gaze.y], dt, 28);
+      dotEl.style.left = x + "px"; dotEl.style.top = y + "px";
+    } else dotEl.dataset.hidden = "1";
     if (current) {
       const r = current.getBoundingClientRect();
-      Object.assign(boxEl.style, { display: "block", left: r.left - 4 + "px", top: r.top - 4 + "px", width: r.width + 8 + "px", height: r.height + 8 + "px" });
-    } else boxEl.style.display = "none";
+      if (!boxShown) { sBox.p = null; boxShown = true; }
+      const [l, tp, w, h] = spring(sBox, [r.left - 4, r.top - 4, r.width + 8, r.height + 8], dt, 30);
+      Object.assign(boxEl.style, { display: "block", left: l + "px", top: tp + "px", width: w + "px", height: h + "px" });
+    } else { boxEl.style.display = "none"; boxShown = false; }
     tagEl.textContent = (connected ? "efg ✓" : "efg: sin conexión con " + ORIGIN) + (map.fitted ? " · ventana localizada" : " · mueve el ratón dentro de la página") +
       (current ? ` · ${label(current)} ${(current_p * 100).toFixed(0)}% ${((performance.now() - since) / 1000).toFixed(1)} s` : "");
   }
@@ -165,14 +195,14 @@
     const es = new EventSource(ORIGIN + "/gaze");
     es.onopen = () => { connected = true; };
     es.onmessage = (ev) => { const m = JSON.parse(ev.data); learnMapping(m); step(m); };
-    es.onerror = () => { connected = false; if (dbg.on) drawDebug(); };
+    es.onerror = () => { connected = false; };
   }
   connect();
 
   window.efg = {
     elementFromGaze: () => (current ? { element: current, p: current_p, dwellMs: performance.now() - since } : null),
     point: () => (gaze ? { x: gaze.x, y: gaze.y } : null),
-    history, options: opt, debug,
+    history, options: opt, debug, origin: ORIGIN,
     get mapping() { return { ...map, pairs: map.pairs.length }; },
   };
 })();
