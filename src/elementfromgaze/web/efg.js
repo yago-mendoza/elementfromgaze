@@ -267,6 +267,10 @@
     maxCells: 161, maxLines: 40, probeMs: 300, window: 32,
     labelP: 0.995, labelSdy: 30, labelConf: 0.3, labelGap: 1.5, lineRelabelS: 30, maxLabelAge: 12, pauseMs: 60000,
     showP: 0.8, keepP: 0.6,
+    // Don't highlight a line that only fits by assuming a big vertical error: on the first real
+    // tests the tracker was 3-3.5° off (4-5 lines) and the filter, confident, highlighted lines far
+    // above the one being read. |dy| above maxDy x the tracker's vertical sd = not plausible = hide.
+    maxDy: 1.5,
   };
   const NOREAD = 'input,textarea,select,button,script,style,noscript,svg,[contenteditable=""],[contenteditable="true"],[data-gaze-read="off"]';
 
@@ -844,11 +848,12 @@
     }
     const dy = w ? m1 / w : 0, dySd = w ? Math.sqrt(Math.max(m2 / w - dy * dy, 0)) : sigB;
     f.pRead = pRead; f.line = line; f.lineP = lineP;
-    const conf = pRead > RD.showP && lineP > RD.showP;
-    if (rview.on) rview.on = pRead > RD.keepP && lineP > RD.keepP && !(rview.line && rview.line.id !== line.id && !conf);
+    const plausible = Math.abs(dy) <= RD.maxDy * sigB;
+    const conf = plausible && pRead > RD.showP && lineP > RD.showP;
+    if (rview.on) rview.on = plausible && pRead > RD.keepP && lineP > RD.keepP && !(rview.line && rview.line.id !== line.id && !conf);
     rview.streak = conf ? (rview.line && rview.line.id === line.id ? rview.streak + 1 : 1) : 0;
     if (!rview.on && rview.streak >= 2) rview.on = true;
-    Object.assign(rview, { line, lineP, pRead, dy, dySd, gain: w ? gm / w : 1, at: now, fix: f });
+    Object.assign(rview, { line, lineP, pRead, dy, dySd, plausible, gain: w ? gm / w : 1, at: now, fix: f });
     pickWord(f.x);
     // segments (runs between return sweeps) -> stage 0 and labels
     const sweep = prev && isSweep(f, prev, line);

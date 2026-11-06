@@ -33,8 +33,20 @@ TRANSPARENT = "#010101"
 VK = {"ctrl": 0x11, "alt": 0x12, "g": 0x47}
 VK_KEYS = {"left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28, "r": 0x52}
 NUDGE_PX = 12            # Ctrl+Alt+arrow: move the dot this much (your "+n")
-RECHECK_POINTS = [(0.5, 0.5), (0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9)]
-RECHECK_S, RECHECK_SETTLE_S = 1.4, 0.5
+# Quick recalibration (Ctrl+Alt+R, or automatic on a new posture): ~10 s following a moving ring
+# (~250 labelled frames over the whole screen, enough to RE-FIT THE NETWORK to this posture in ~5 s
+# of background compute) + 3 still points (a clean check for the global correction). The 5 static
+# buttons it replaces gave 5 numbers: they could shift the output, never fix the network.
+RECAL_PURSUIT_S, RECAL_POINT_S, RECAL_SETTLE_S, RECAL_LAG_S = 10.0, 1.3, 0.5, 0.10
+RECAL_POINTS = [(0.12, 0.14), (0.88, 0.14), (0.5, 0.88)]
+RECAL_ROUNDS = 4
+
+
+def _recal_path(W: int, H: int, t: float) -> tuple[float, float]:
+    """Lissajous through the whole screen in 10 s (corners and bottom edge included)."""
+    import math
+    return (W / 2 + 0.44 * W * math.sin(2 * math.pi * 0.16 * t),
+            H / 2 + 0.42 * H * math.sin(2 * math.pi * 0.25 * t + 0.6))
 # Frames are time-stamped when PROCESSED, ~0.13 s after exposure (fitted on 4 track sessions:
 # best lag 0.10-0.16 s). Event windows below are in EYE time and shifted by this to sample time.
 LATENCY_S = 0.13
@@ -146,9 +158,18 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         h = pose_vector(head_euler(s.matrix), float(s.features[6]))
         is_blink = blinker(lid_opening(s), s.eye_blink)
         held = is_blink or not s.eyes_ok
-        if recheck["on"] and not held and time.monotonic() - recheck["t0"] >= RECHECK_SETTLE_S:
-            recheck["got"].append(base)
-            recheck["samples"].append(s)
+        if recheck["on"] and not held:
+            te = s.t - LATENCY_S - recheck["t0"]          # when the eye saw what this frame shows
+            tgt, kind = None, None
+            if 0.8 <= te < RECAL_PURSUIT_S:
+                tgt, kind = _recal_path(W, H, te - RECAL_LAG_S), "pursuit"
+            elif te >= RECAL_PURSUIT_S:
+                k, lt = divmod(te - RECAL_PURSUIT_S, RECAL_POINT_S)
+                if int(k) < len(RECAL_POINTS) and lt >= RECAL_SETTLE_S:
+                    fx, fy = RECAL_POINTS[int(k)]
+                    tgt, kind = (fx * W, fy * H), f"fix{int(k)}"
+            if tgt is not None:
+                recheck["rows"].append((s, base, np.asarray(tgt, float), kind))
         if not held:
             he = head_euler(s.matrix)
             posture.append((he[0], he[1], float(s.features[6]), lid_opening(s)))
@@ -202,7 +223,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     def looking_away_now(now: float) -> bool:
         return now - latest.get("off_t", -1e9) < 0.25
     keys_prev: dict = {}
-    recheck = {"on": False, "i": 0, "t0": 0.0, "got": [], "res": [], "samples": []}
+    recheck = {"on": False, "t0": 0.0, "rows": [], "busy": False}   # rows: (sample, base, target, kind)
     rechk_rec = Recorder()     # recheck fixations: clean labels in NEW postures -> training data
 
     def pressed(key: str) -> bool:      # rising edge of Ctrl+Alt+key
@@ -245,53 +266,90 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         return True
 
     def start_recheck(auto: bool = False) -> None:
-        if recheck["on"]:
+        if recheck["on"] or recheck["busy"]:
             return
-        recheck.update(on=True, i=0, t0=time.monotonic(), got=[], res=[], samples=[])
-        print("   recalibración rápida" + (" automática" if auto else "") + ": mira cada botón naranja")
+        recheck.update(on=True, t0=time.monotonic(), rows=[])
+        print("   recalibración rápida" + (" automática" if auto else "") + ": sigue el aro naranja (≈14 s)")
+
+    def finish_recheck() -> None:
+        """Re-fit the network to this posture (background), then the global correction from the 3
+        still points measured with the NEW network; bank the result; keep the frames as training data."""
+        rows = [r for r in recheck["rows"] if r[0].patches is not None]
+        pts = [r for r in rows if r[3].startswith("fix")]
+        recheck["on"] = False
+        if len(rows) < 120 or len({r[3] for r in pts}) < 2:
+            print("   recalibración: no vi bien tus ojos, sin cambios")
+            toaster.show("Recalibración sin cambios", "No vi bien tus ojos", "warn", 3500)
+            return
+        ppd_ = screen.px_per_degree()
+        err_before = np.median([np.linalg.norm(aff.apply(r[1]) - r[2]) for r in pts]) / ppd_
+        for i, (smp, _, tgt, kind) in enumerate(rows):             # training data for `efg train`
+            if smp.frame is not None:
+                seg = Segment("pursuit" if kind == "pursuit" else "fix", 0.0, None)
+                rechk_rec.add(smp, seg_i=0 if kind == "pursuit" else 1 + int(kind[3:]), local_t=1.0, seg=seg,
+                              target_now=tuple(tgt), target=tuple(tgt), valid=True)
+        recheck["busy"] = True
+        toaster.show("Ajustando la red a esta postura…", "Unos segundos; puedes seguir usando el ordenador", "info", 4000)
+
+        def work():
+            import copy
+            try:
+                m = state["model"]
+                X = np.array([r[0].features for r in rows])
+                P = np.array([r[0].patches for r in rows])
+                Y = np.array([r[2] for r in rows], np.float32)
+                app = getattr(m, "appearance", None)
+                if app is not None and tune.get("prior") is not None:
+                    from .appearance import finetune_copy
+                    Xp, Yp, Pp = tune["prior"]
+                    rng = np.random.default_rng(int(time.time()))
+                    for k in range(RECAL_ROUNDS):          # same recipe as the warm-up, half the rounds
+                        rep = rng.choice(len(Xp), min(len(X), len(Xp)), replace=False)
+                        app = finetune_copy(app, np.concatenate([P, Pp[rep]]), np.vstack([X, Xp[rep]]),
+                                            np.vstack([Y, Yp[rep]]), steps=40, seed=k)
+                    m = copy.copy(m)
+                    m.appearance = app
+                    tuned = True
+                else:
+                    tuned = False
+                chk = AffineKalman.for_check(W, H)
+                for kind in sorted({r[3] for r in pts}):
+                    q = [i for i, r in enumerate(rows) if r[3] == kind]
+                    pred = m.predict_full(X[q], P[q]) if tuned else np.array([rows[i][1] for i in q])
+                    chk.add(np.median(pred, 0), rows[q[0]][2], time.monotonic())
+                with lock:
+                    state["model"] = m
+                    aff.adopt(chk)
+                    corr.forget()
+                    labels_hist.clear()
+                    gen["n"] += 1
+                saved = bank_this_posture()
+                msg = f"error antes {err_before:.1f}°" + (" · red ajustada" if tuned else "") + (" · postura guardada" if saved else "")
+                print(f"   recalibrado: {msg} · {aff.describe()}")
+                recheck["toast"] = ("Recalibrado", msg, "ok", 3500)     # shown by the Tk thread
+            except Exception as e:      # never kill the overlay over a recalibration
+                print("   recalibración falló:", e)
+            finally:
+                recheck["busy"] = False
+
+        threading.Thread(target=work, daemon=True).start()
 
     def recheck_tick(now: float) -> None:
-        """Ctrl+Alt+R: 5 buttons, ~7 s, without leaving `dot`. Their residuals replace the global
-        correction (same as the warm-up's 9-button check)."""
         canvas.delete("recheck")
-        i = recheck["i"]
-        if i >= len(RECHECK_POINTS):
-            res = recheck["res"]
-            recheck["on"] = False
-            if len(res) >= 3:
-                with lock:
-                    chk = AffineKalman.for_check(W, H)       # clean labels: looser gain prior
-                    for p, lab, t in res:
-                        chk.add(p, lab, t)
-                    aff.adopt(chk)
-                    gen["n"] += 1
-                    corr.forget()
-                    desc = aff.describe()
-                e = np.median([np.linalg.norm(p - lab) for p, lab, _ in res]) / screen.px_per_degree()
-                print(f"   recalibrado con {len(res)} botones (error antes {e:.2f}°) · {desc}")
-                saved = bank_this_posture()
-                toaster.show("Recalibrado", f"{len(res)} botones · el error era {e:.1f}°"
-                             + (" · postura guardada" if saved else ""), "ok", 3500)
-            else:
-                print("   recalibración: no vi bien tus ojos, sin cambios")
-                toaster.show("Recalibración sin cambios", "No vi bien tus ojos", "warn", 3500)
+        t = now - recheck["t0"]
+        total = RECAL_PURSUIT_S + len(RECAL_POINTS) * RECAL_POINT_S
+        if t >= total + 0.3:
+            finish_recheck()
             return
-        fx, fy = RECHECK_POINTS[i]
-        x, y = fx * W, fy * H
-        h = 1.5 * screen.px_per_degree()
-        canvas.create_rectangle(x - h, y - h / 2, x + h, y + h / 2, fill="#e8a33d", outline="#ffd27a", width=2, tags="recheck")
-        canvas.create_text(x, y, text="mira aquí", fill="#1b1b1b", font=("Segoe UI", int(h * 0.28)), tags="recheck")
-        lt = now - recheck["t0"]
-        if lt >= RECHECK_S:
-            if len(recheck["got"]) >= 5:
-                recheck["res"].append((np.median(recheck["got"], 0), np.array([x, y]), now))
-                seg = Segment("fix", RECHECK_S, None)
-                for smp in recheck["samples"]:
-                    if smp.frame is not None:
-                        rechk_rec.add(smp, seg_i=len(recheck["res"]), local_t=RECHECK_S, seg=seg,
-                                      target_now=(x, y), target=(x, y), valid=True)
-            recheck["i"] += 1
-            recheck["t0"], recheck["got"], recheck["samples"] = now, [], []
+        if t < RECAL_PURSUIT_S:
+            x, y = _recal_path(W, H, t)
+            r = 15
+        else:
+            fx, fy = RECAL_POINTS[min(int((t - RECAL_PURSUIT_S) // RECAL_POINT_S), len(RECAL_POINTS) - 1)]
+            x, y = fx * W, fy * H
+            r = 15 + 14 * max(0.0, 1 - ((t - RECAL_PURSUIT_S) % RECAL_POINT_S) / RECAL_SETTLE_S)   # shrinking ring
+        canvas.create_oval(x - r, y - r, x + r, y + r, outline="#e8a33d", width=4, tags="recheck")
+        canvas.create_oval(x - 3, y - 3, x + 3, y + 3, fill="#e8a33d", outline="", tags="recheck")
     root.update_idletasks()
     screen.make_click_through(ctypes.windll.user32.GetParent(root.winfo_id()))
     from .toast import Toaster
@@ -440,6 +498,9 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
             start_recheck()
         if recheck["on"]:
             recheck_tick(now)
+        if recheck.get("toast"):
+            toaster.show(*recheck["toast"])
+            recheck["toast"] = None
         if watcher:
             typing["last_key"] = max(typing["last_key"], watcher.last_key)   # live: the label queue lags 0.55 s
             for ev in watcher.drain_ready(now, LABEL_DELAY_S):
@@ -501,7 +562,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
                 print("   ⚠ postura nueva (" + ", ".join(why) + "): recalibro en 3 s")
                 gen["n"] += 1
                 toaster.show("Postura nueva: " + ", ".join(why),
-                             "Recalibro en 3 s: mira los 5 botones naranjas (7 s). Después la recuerdo.", "warn", 3000)
+                             "Recalibro en 3 s: sigue el aro naranja (≈14 s). Después la recuerdo.", "warn", 3000)
                 root.after(3000, lambda: start_recheck(auto=True))
         p = latest.get("p")
         looking_away = now - latest.get("off_t", -1e9) < 0.25
