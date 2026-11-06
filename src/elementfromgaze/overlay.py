@@ -147,6 +147,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         held = is_blink or not s.eyes_ok
         if recheck["on"] and not held and time.monotonic() - recheck["t0"] >= RECHECK_SETTLE_S:
             recheck["got"].append(base)
+            recheck["samples"].append(s)
         if not held:
             he = head_euler(s.matrix)
             posture.append((he[0], he[1], float(s.features[6]), lid_opening(s)))
@@ -200,7 +201,8 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     def looking_away_now(now: float) -> bool:
         return now - latest.get("off_t", -1e9) < 0.25
     keys_prev: dict = {}
-    recheck = {"on": False, "i": 0, "t0": 0.0, "got": [], "res": []}
+    recheck = {"on": False, "i": 0, "t0": 0.0, "got": [], "res": [], "samples": []}
+    rechk_rec = Recorder()     # recheck fixations: clean labels in NEW postures -> training data
 
     def pressed(key: str) -> bool:      # rising edge of Ctrl+Alt+key
         now_down = _combo(key)
@@ -244,7 +246,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     def start_recheck(auto: bool = False) -> None:
         if recheck["on"]:
             return
-        recheck.update(on=True, i=0, t0=time.monotonic(), got=[], res=[])
+        recheck.update(on=True, i=0, t0=time.monotonic(), got=[], res=[], samples=[])
         print("   recalibración rápida" + (" automática" if auto else "") + ": mira cada botón naranja")
 
     def recheck_tick(now: float) -> None:
@@ -282,8 +284,13 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         if lt >= RECHECK_S:
             if len(recheck["got"]) >= 5:
                 recheck["res"].append((np.median(recheck["got"], 0), np.array([x, y]), now))
+                seg = Segment("fix", RECHECK_S, None)
+                for smp in recheck["samples"]:
+                    if smp.frame is not None:
+                        rechk_rec.add(smp, seg_i=len(recheck["res"]), local_t=RECHECK_S, seg=seg,
+                                      target_now=(x, y), target=(x, y), valid=True)
             recheck["i"] += 1
-            recheck["t0"], recheck["got"] = now, []
+            recheck["t0"], recheck["got"], recheck["samples"] = now, [], []
     root.update_idletasks()
     screen.make_click_through(ctypes.windll.user32.GetParent(root.winfo_id()))
     from .toast import Toaster
@@ -550,6 +557,9 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         if scanner is not None:
             scanner.close()
             print(f"control: {ctl['clicks']} clics con la mirada")
+        if len(rechk_rec):
+            print("recalibraciones guardadas como datos de entrenamiento:",
+                  rechk_rec.save(W, H, "recheck", "botones de Ctrl+Alt+R / postura nueva", worker.stats()))
         if len(rec):
             path = rec.save(W, H, "implicit", "clics y escritura durante `efg dot`", worker.stats())
             print(f"guardadas {stats['labels']} etiquetas implícitas ({len(rec)} muestras) en {path}")
