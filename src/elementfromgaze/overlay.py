@@ -33,20 +33,29 @@ TRANSPARENT = "#010101"
 VK = {"ctrl": 0x11, "alt": 0x12, "g": 0x47}
 VK_KEYS = {"left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28, "r": 0x52}
 NUDGE_PX = 12            # Ctrl+Alt+arrow: move the dot this much (your "+n")
-# Quick recalibration (Ctrl+Alt+R, or automatic on a new posture): ~10 s following a moving ring
-# (~250 labelled frames over the whole screen, enough to RE-FIT THE NETWORK to this posture in ~5 s
-# of background compute) + 3 still points (a clean check for the global correction). The 5 static
-# buttons it replaces gave 5 numbers: they could shift the output, never fix the network.
-RECAL_PURSUIT_S, RECAL_POINT_S, RECAL_SETTLE_S, RECAL_LAG_S = 10.0, 1.3, 0.5, 0.10
+# Recalibration (Ctrl+Alt+R, or automatic on a new posture): follow a ring along the SAME path as the
+# warm-up's first 45 s (18 s curve + raster sweeps top to bottom) + 3 still points, then re-fit the
+# network (4 rounds, background) and bank the posture. Measured by re-fitting with the first N s of
+# real warm-ups on 5 held-out sessions: 12 s 1.77°, 20 s 1.62°, 30 s 1.60°, 45 s 1.33° (= full
+# warm-up 1.34°; close reading posture 2.44° -> 1.28°). What matters is covering the whole screen,
+# edges included; 4 rounds beat 8. Long, but once per posture: the bank remembers it.
+RECAL_POINT_S, RECAL_SETTLE_S, RECAL_LAG_S = 1.3, 0.5, 0.10
 RECAL_POINTS = [(0.12, 0.14), (0.88, 0.14), (0.5, 0.88)]
 RECAL_ROUNDS = 4
+RECAL_CURVE_S, RECAL_ROWS, RECAL_SPEED = 18.0, [0.06, 0.3, 0.55, 0.8, 0.95], 380.0
 
 
-def _recal_path(W: int, H: int, t: float) -> tuple[float, float]:
-    """Lissajous through the whole screen in 10 s (corners and bottom edge included)."""
-    import math
-    return (W / 2 + 0.44 * W * math.sin(2 * math.pi * 0.16 * t),
-            H / 2 + 0.42 * H * math.sin(2 * math.pi * 0.25 * t + 0.6))
+def _recal_plan(W: int, H: int):
+    """(path(t), duration): the warm-up's curve, then its raster sweeps."""
+    from .track import _lissajous, _raster
+    curve = _lissajous(W, H, 3.1)
+    raster, dur = _raster(W, H, RECAL_ROWS, RECAL_SPEED)
+    total = RECAL_CURVE_S + dur
+
+    def path(t: float) -> tuple[float, float]:
+        return curve(t) if t < RECAL_CURVE_S else raster(t - RECAL_CURVE_S)
+
+    return path, total
 # Frames are time-stamped when PROCESSED, ~0.13 s after exposure (fitted on 4 track sessions:
 # best lag 0.10-0.16 s). Event windows below are in EYE time and shifted by this to sample time.
 LATENCY_S = 0.13
@@ -161,10 +170,10 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         if recheck["on"] and not held:
             te = s.t - LATENCY_S - recheck["t0"]          # when the eye saw what this frame shows
             tgt, kind = None, None
-            if 0.8 <= te < RECAL_PURSUIT_S:
-                tgt, kind = _recal_path(W, H, te - RECAL_LAG_S), "pursuit"
-            elif te >= RECAL_PURSUIT_S:
-                k, lt = divmod(te - RECAL_PURSUIT_S, RECAL_POINT_S)
+            if 0.8 <= te < recal_T:
+                tgt, kind = recal_path(te - RECAL_LAG_S), "pursuit"
+            elif te >= recal_T:
+                k, lt = divmod(te - recal_T, RECAL_POINT_S)
                 if int(k) < len(RECAL_POINTS) and lt >= RECAL_SETTLE_S:
                     fx, fy = RECAL_POINTS[int(k)]
                     tgt, kind = (fx * W, fy * H), f"fix{int(k)}"
@@ -224,6 +233,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         return now - latest.get("off_t", -1e9) < 0.25
     keys_prev: dict = {}
     recheck = {"on": False, "t0": 0.0, "rows": [], "busy": False}   # rows: (sample, base, target, kind)
+    recal_path, recal_T = _recal_plan(W, H)
     rechk_rec = Recorder()     # recheck fixations: clean labels in NEW postures -> training data
 
     def pressed(key: str) -> bool:      # rising edge of Ctrl+Alt+key
@@ -269,7 +279,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         if recheck["on"] or recheck["busy"]:
             return
         recheck.update(on=True, t0=time.monotonic(), rows=[])
-        print("   recalibración rápida" + (" automática" if auto else "") + ": sigue el aro naranja (≈14 s)")
+        print("   recalibración" + (" automática" if auto else "") + f": sigue el aro naranja (≈{recal_T + 4:.0f} s)")
 
     def finish_recheck() -> None:
         """Re-fit the network to this posture (background), then the global correction from the 3
@@ -337,17 +347,17 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     def recheck_tick(now: float) -> None:
         canvas.delete("recheck")
         t = now - recheck["t0"]
-        total = RECAL_PURSUIT_S + len(RECAL_POINTS) * RECAL_POINT_S
+        total = recal_T + len(RECAL_POINTS) * RECAL_POINT_S
         if t >= total + 0.3:
             finish_recheck()
             return
-        if t < RECAL_PURSUIT_S:
-            x, y = _recal_path(W, H, t)
+        if t < recal_T:
+            x, y = recal_path(t)
             r = 15
         else:
-            fx, fy = RECAL_POINTS[min(int((t - RECAL_PURSUIT_S) // RECAL_POINT_S), len(RECAL_POINTS) - 1)]
+            fx, fy = RECAL_POINTS[min(int((t - recal_T) // RECAL_POINT_S), len(RECAL_POINTS) - 1)]
             x, y = fx * W, fy * H
-            r = 15 + 14 * max(0.0, 1 - ((t - RECAL_PURSUIT_S) % RECAL_POINT_S) / RECAL_SETTLE_S)   # shrinking ring
+            r = 15 + 14 * max(0.0, 1 - ((t - recal_T) % RECAL_POINT_S) / RECAL_SETTLE_S)   # shrinking ring
         canvas.create_oval(x - r, y - r, x + r, y + r, outline="#e8a33d", width=4, tags="recheck")
         canvas.create_oval(x - 3, y - 3, x + 3, y + 3, fill="#e8a33d", outline="", tags="recheck")
     root.update_idletasks()
@@ -562,7 +572,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
                 print("   ⚠ postura nueva (" + ", ".join(why) + "): recalibro en 3 s")
                 gen["n"] += 1
                 toaster.show("Postura nueva: " + ", ".join(why),
-                             "Recalibro en 3 s: sigue el aro naranja (≈14 s). Después la recuerdo.", "warn", 3000)
+                             "Recalibro en 3 s: sigue el aro naranja (≈45 s). Después recuerdo esta postura.", "warn", 3000)
                 root.after(3000, lambda: start_recheck(auto=True))
         p = latest.get("p")
         looking_away = now - latest.get("off_t", -1e9) < 0.25

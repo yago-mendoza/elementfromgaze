@@ -65,7 +65,7 @@ def _torch():
     return torch, nn
 
 
-def _build_net(n_mod: int, geo_p: np.ndarray, pose_in: bool = False):
+def _build_net(n_mod: int, geo_p: np.ndarray, pose_in: bool = False, binoc: bool = False):
     torch, nn = _torch()
     from .geometry import P_E, P_M, P_PITCH, P_S, P_YAW
 
@@ -101,9 +101,46 @@ def _build_net(n_mod: int, geo_p: np.ndarray, pose_in: bool = False):
             g0 = torch.tensor(np.r_[geo_p[P_E], geo_p[P_S], geo_p[P_M]], dtype=torch.float32)
             self.register_buffer("g0", g0.clone())
             self.g = nn.Parameter(g0.clone())
+            # binoc: each eye its own ray (own angle head + confidence), from its own origin (head
+            # origin ± a learned half inter-eye offset), both supervised; fused by confidence. A far,
+            # foreshortened or lid-covered eye can be down-weighted; disagreement = uncertainty.
+            self.binoc = binoc
+            if binoc:
+                pin = 64 * n_mod + (12 if pose_in else 0)
+                self.eye_heads = nn.ModuleList([nn.Sequential(nn.Linear(pin, 48), nn.ReLU(), nn.Linear(48, 3)) for _ in range(2)])
+                with torch.no_grad():
+                    for h in self.eye_heads:
+                        h[2].weight.mul_(0.1)
+                        h[2].bias.copy_(torch.tensor([geo_p[P_YAW][0], geo_p[P_PITCH][0], 0.0], dtype=torch.float32))
+                self.half_ipd = nn.Parameter(torch.zeros(3))
+            self.last = None
+
+        def _hit(self, yaw, pitch, R, t, off):
+            cp = torch.cos(pitch)
+            d = torch.stack([torch.sin(yaw) * cp, torch.sin(pitch), torch.cos(yaw) * cp], 1)
+            g = torch.einsum("nij,nj->ni", R, d)
+            e, s, m = self.g[0:3], self.g[3], self.g[4:10]
+            o = s * t + torch.einsum("nij,j->ni", R, e + off)
+            lam = -o[:, 2] / g[:, 2].clamp(min=0.15)
+            px, py = o[:, 0] + lam * g[:, 0], o[:, 1] + lam * g[:, 1]
+            return torch.stack([m[0] * px + m[1] * py + m[2], m[3] * px + m[4] * py + m[5]], 1)
 
         def forward(self, xs, R, t):
             B = xs[0].shape[0]
+            if self.binoc:
+                fe = torch.cat([tw(x.reshape(B * 2, 1, *x.shape[2:])).reshape(B, 2, 64) for tw, x in zip(self.towers, xs)], 2)
+                pts, conf = [], []
+                for k in range(2):
+                    fk = fe[:, k]
+                    if self.pose_in:
+                        fk = torch.cat([fk, R.reshape(B, 9), t / 50.0], 1)
+                    a = self.eye_heads[k](fk)
+                    pts.append(self._hit(a[:, 0], a[:, 1], R, t, self.half_ipd * (1 if k == 0 else -1)))
+                    conf.append(a[:, 2])
+                w = torch.softmax(torch.stack(conf, 1), 1)
+                fused = w[:, :1] * pts[0] + w[:, 1:] * pts[1]
+                self.last = (pts[0], pts[1], w)
+                return fused
             f = torch.cat([tw(x.reshape(B * 2, 1, *x.shape[2:])).reshape(B, 128) for tw, x in zip(self.towers, xs)], 1)
             if self.pose_in:
                 f = torch.cat([f, R.reshape(B, 9), t / 50.0], 1)
@@ -162,9 +199,10 @@ _LIVE_THREADS_SET = False
 class AppearanceModel:
     """eye patches (+ head pose from the feature vector) -> screen px."""
 
-    def __init__(self, epochs: int = 20, batch: int = 128, lr: float = 2e-3, seed: int = 0, pose_in: bool = False):
+    def __init__(self, epochs: int = 20, batch: int = 128, lr: float = 2e-3, seed: int = 0, pose_in: bool = False,
+                 binoc: bool = False):
         self.epochs, self.batch, self.lr, self.seed = epochs, batch, lr, seed
-        self._pose_in = pose_in
+        self._pose_in, self._binoc = pose_in, binoc
 
     def fit(self, P, X: np.ndarray, Y: np.ndarray, log=print) -> "AppearanceModel":
         """P: (N, 2, 44, 72) patches, or a list of them (one per camera, e.g. [colour, IR])."""
@@ -178,7 +216,7 @@ class AppearanceModel:
         Pn = [_norm(p) for p in _mods(P)]
         self._geo_p = GeoModel().fit(X, Y).p
         self._n_mod = len(Pn)
-        self.net = _build_net(self._n_mod, self._geo_p, getattr(self, "_pose_in", False))
+        self.net = _build_net(self._n_mod, self._geo_p, getattr(self, "_pose_in", False), getattr(self, "_binoc", False))
         opt = torch.optim.AdamW(self.net.parameters(), lr=self.lr, weight_decay=1e-4)
         steps_per = int(np.ceil(len(X) / self.batch))
         sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=self.lr, total_steps=self.epochs * steps_per, pct_start=0.15)
@@ -195,6 +233,9 @@ class AppearanceModel:
                     continue
                 xs = [torch.from_numpy(_crop(p[ix], True, rng)) for p in Pn]
                 loss = F.smooth_l1_loss(self.net(xs, R[ix], t[ix]) / 100, Yt[ix] / 100) + self.net.prior() / len(X)
+                if self.net.binoc:            # each eye must hit the target on its own too
+                    p0, p1, _ = self.net.last
+                    loss = loss + 0.25 * (F.smooth_l1_loss(p0 / 100, Yt[ix] / 100) + F.smooth_l1_loss(p1 / 100, Yt[ix] / 100))
                 opt.zero_grad()
                 loss.backward()
                 opt.step()
@@ -216,7 +257,7 @@ class AppearanceModel:
         self.__dict__.update(st)
         if isinstance(st.get("net"), dict):
             torch, _ = _torch()
-            self.net = _build_net(st["_n_mod"], st["_geo_p"], st.get("_pose_in", False))
+            self.net = _build_net(st["_n_mod"], st["_geo_p"], st.get("_pose_in", False), st.get("_binoc", False))
             self.net.load_state_dict({k: torch.from_numpy(v) for k, v in st["net"].items()})
             self.net.eval()
 
