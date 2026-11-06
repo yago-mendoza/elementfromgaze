@@ -85,16 +85,17 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     ppd = screen.px_per_degree()
     sd_px, sdx_px, sdy_px = SD_DEG * ppd, SD_X_DEG * ppd, SD_Y_DEG * ppd
     scanner = snapper = squint = None
-    ctl = {"frozen": None, "fire": None, "snap": None, "clicks": 0}
+    ctl = {"frozen": None, "fire": None, "snap": None, "clicks": 0, "hist": deque(maxlen=40)}   # hist: (t, snapped rect)
     if control:
-        from .desktop import GESTURE_FILE, Snapper, SquintClick, UIAScanner, load_gesture
+        from .desktop import GESTURE_FILE, Snapper, UIAScanner, load_gesture, make_clicker
         scanner, snapper = UIAScanner(W, H), Snapper()
         gest = load_gesture(USER_MODEL.parent / GESTURE_FILE)
         if click:
             if not gest:
-                print("   aviso: sin `efg gesture` uso un umbral genérico para entrecerrar; mejor grábalo (20 s)")
+                print("   aviso: sin `efg gesture` uso valores genéricos para el parpadeo largo; mejor grábalo (25 s)")
+        how = "ENTRECIERRA ~0,3 s" if gest.get("mode") == "squint" else f"PARPADEO LARGO (~{gest.get('hold_s', 0.45):.2g} s)"
         print("control del escritorio: botones de la ventana activa y la barra de tareas"
-              + (" · ENTRECIERRA los ojos ~0,3 s para hacer clic" if click else " · (clic desactivado: --click)"))
+              + (f" · {how} para hacer clic" if click else " · (clic desactivado: --click)"))
 
     aff = AffineKalman.seeded(W, H, model)   # global deformation (fast, few labels); starts from the warm-up check
     corr = ResidualCorrector()       # local residual field on top (needs many labels)
@@ -130,11 +131,14 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         if control and click and s.blendshapes is not None:
             if squint is None:
                 from .features import BLENDSHAPE_NAMES
-                g = load_gesture(USER_MODEL.parent / "gesture.json")
-                squint = SquintClick(list(BLENDSHAPE_NAMES), thr=g.get("thr", 0.25), hold_s=g.get("hold_s", 0.3))
+                squint = make_clicker(list(BLENDSHAPE_NAMES), load_gesture(USER_MODEL.parent / GESTURE_FILE))
             started, fire = squint(s.blendshapes, s.t)
             if started:
-                ctl["frozen"] = ctl["snap"]        # lids narrowing shift the estimate: decide NOW
+                # closing lids drag the estimate down for ~0.1-0.2 s before the gesture registers:
+                # decide on the element snapped just BEFORE that (minus the camera latency)
+                now_m = time.monotonic()
+                prior = [r for (tt, r) in list(ctl["hist"]) if tt <= now_m - 0.25]
+                ctl["frozen"] = prior[-1] if prior else ctl["snap"]
             if fire and ctl["frozen"] is not None:
                 ctl["fire"] = ctl["frozen"]
         base = state["model"].predict_full(s.features, s.patches)[0]
@@ -230,8 +234,10 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
                     desc = aff.describe()
                 e = np.median([np.linalg.norm(p - lab) for p, lab, _ in res]) / screen.px_per_degree()
                 print(f"   recalibrado con {len(res)} botones (error antes {e:.2f}°) · {desc}")
+                toaster.show("Recalibrado", f"{len(res)} botones · el error era {e:.1f}°", "ok", 3500)
             else:
                 print("   recalibración: no vi bien tus ojos, sin cambios")
+                toaster.show("Recalibración sin cambios", "No vi bien tus ojos", "warn", 3500)
             return
         fx, fy = RECHECK_POINTS[i]
         x, y = fx * W, fy * H
@@ -246,6 +252,8 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
             recheck["t0"], recheck["got"] = now, []
     root.update_idletasks()
     screen.make_click_through(ctypes.windll.user32.GetParent(root.winfo_id()))
+    from .toast import Toaster
+    toaster = Toaster(root, W, H)
 
     def flash(pos, ok: bool) -> None:
         x, y = pos
@@ -424,16 +432,16 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
                     wp["pose"] = pose
                     why = []
                     print(f"   banco de posturas: uso el calentamiento {path.stem[5:]} (distancia {d:.2f})")
+                    toaster.show("Postura reconocida", f"Uso tu calentamiento del {path.stem[11:13]}/{path.stem[9:11]} a las "
+                                 f"{path.stem[14:16]}:{path.stem[16:18]}", "info", 3500)
             if why and now - drift["warned"] > 90:
                 drift["warned"] = now
                 msg = ("Postura nueva (" + ", ".join(why) + ").  Ctrl+Alt+R recalibra en 7 s · "
                        "`--rewarm` la añade al banco")
                 print("   ⚠", msg)
                 gen["n"] += 1
-                canvas.delete("toast")
-                canvas.create_rectangle(W / 2 - 430, 14, W / 2 + 430, 54, fill="#202328", outline="#e8a33d", width=2, tags="toast")
-                canvas.create_text(W / 2, 34, text=msg, fill="#f0f0f0", font=("Segoe UI", 12), tags="toast")
-                root.after(7000, lambda: canvas.delete("toast"))
+                toaster.show("Postura nueva: " + ", ".join(why),
+                             "Ctrl+Alt+R recalibra en 7 s  ·  con --rewarm la guardo en el banco", "warn", 7000)
         p = latest.get("p")
         looking_away = now - latest.get("off_t", -1e9) < 0.25
         dt = now - tick_t[0]
@@ -444,6 +452,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
                                     and not looking_away_now(now)) else None
             r = snapper(None if g is None else np.asarray(g, float), sdx_px, sdy_px, els, rects, W * H)
             ctl["snap"] = r
+            ctl["hist"].append((now, r))
             if r is not None:
                 tgt = [r[0] - 5, r[1] - 5, r[2] + 5, r[3] + 5]
                 if canvas.itemcget(lens_id, "state") == "hidden":

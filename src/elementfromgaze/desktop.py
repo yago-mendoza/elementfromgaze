@@ -72,6 +72,11 @@ class UIAScanner:
         clickable = uia.CreateOrConditionFromArray([uia.CreatePropertyCondition(p, True) for p in (
             U.UIA_IsInvokePatternAvailablePropertyId, U.UIA_IsTogglePatternAvailablePropertyId,
             U.UIA_IsSelectionItemPatternAvailablePropertyId, U.UIA_IsExpandCollapsePatternAvailablePropertyId)])
+        # web content in browsers often exposes links/buttons without those patterns: add control types
+        kinds = uia.CreateOrConditionFromArray([uia.CreatePropertyCondition(U.UIA_ControlTypePropertyId, k) for k in (
+            50000, 50005, 50011, 50019, 50007, 50002, 50013, 50003, 50024, 50031, 50004)])
+        # Button, Hyperlink, MenuItem, TabItem, ListItem, CheckBox, RadioButton, ComboBox, TreeItem, SplitButton, Edit
+        clickable = uia.CreateOrCondition(clickable, kinds)
         cond = uia.CreateAndCondition(clickable, uia.CreatePropertyCondition(U.UIA_IsOffscreenPropertyId, False))
         cache = uia.CreateCacheRequest()
         for p in (U.UIA_BoundingRectanglePropertyId, U.UIA_NamePropertyId, U.UIA_ControlTypePropertyId):
@@ -238,3 +243,39 @@ def click_at(x: float, y: float, restore: bool = True) -> None:
     if restore:
         time.sleep(0.03)
         user32.SetCursorPos(pt.x, pt.y)
+
+
+class LongBlinkClick:
+    """Long-blink click: close both eyes for hold_s (natural blinks last 0.1-0.3 s; the default 0.45 s
+    and the closed threshold come from `efg gesture`). Same interface as SquintClick. Squinting was
+    tried first and failed for this user: MediaPipe's eyeSquint score went DOWN when squinting
+    (0.31 -> 0.11) and overlapped normal frames, while a closed eye is unmistakable."""
+
+    def __init__(self, names: list[str], closed_thr: float = 0.5, hold_s: float = 0.45, refractory_s: float = 1.0):
+        ix = {n: i for i, n in enumerate(names)}
+        self.i_bl = [ix["eyeBlinkLeft"], ix["eyeBlinkRight"]]
+        self.closed_thr, self.hold_s, self.refractory_s = closed_thr, hold_s, refractory_s
+        self.since: float | None = None
+        self.fired = False
+        self.last_fire = -1e9
+        self.progress = 0.0
+
+    def __call__(self, bs: np.ndarray, t: float) -> tuple[bool, bool]:
+        closed = float(bs[self.i_bl].min()) > self.closed_thr      # BOTH eyes: a wink or a glance down is not it
+        if not closed:
+            self.since, self.fired, self.progress = None, False, 0.0
+            return False, False
+        started = self.since is None
+        if started:
+            self.since = t
+        self.progress = min(1.0, (t - self.since) / self.hold_s)
+        if not self.fired and t - self.since >= self.hold_s and t - self.last_fire > self.refractory_s:
+            self.fired, self.last_fire = True, t
+            return started, True
+        return started, False
+
+
+def make_clicker(names: list[str], gesture: dict):
+    if gesture.get("mode", "blink") == "squint":
+        return SquintClick(names, thr=gesture.get("thr", 0.25), hold_s=gesture.get("hold_s", 0.3))
+    return LongBlinkClick(names, closed_thr=gesture.get("closed_thr", 0.5), hold_s=gesture.get("hold_s", 0.45))

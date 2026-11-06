@@ -193,7 +193,7 @@ class WarmupStage(Stage):
     network still gets wrong on real fixations (on `targets` it left a 1.5° vertical bias), which
     seeds the global correction of `efg dot` so it is right from the first second, before any click."""
 
-    title = "Calentamiento (≈65 s)"
+    title = "Calentamiento (≈75 s)"
     intro_text = ("Sigue con la mirada el ARO; al final, mira cada BOTÓN que se ilumine.\n"
                   "Siéntate como vas a usar el ordenador: así el modelo se ajusta a tu postura de ahora.\n\n"
                   "ESPACIO para empezar · ESC para saltarlo")
@@ -206,6 +206,10 @@ class WarmupStage(Stage):
         # dwells there
         for k, (fx, fy) in enumerate([(0.04, 0.05), (0.96, 0.05), (0.96, 0.95), (0.04, 0.95)]):
             segs.append(Segment("fix", 1.9, (lambda t, x=fx * W, y=fy * H: (x, y)), 0.7, bg=BGS[k % 2]))
+        # head turns while fixating: the dot drifted ~2-3 px per degree of head yaw (measured on the
+        # head-motion sessions); 6 s of this in the CURRENT posture teaches the network to hold still
+        segs.append(message("Mira el punto y gira la cabeza despacio: izquierda, derecha, arriba, abajo.", 2.2))
+        segs.append(Segment("vor", 6.5, (lambda t, x=W / 2, y=H * 0.45: (x, y)), 0.6, bg=BGS[0]))
         pts = CHECK_POINTS[:]
         random.shuffle(pts)
         segs.append(message("Ahora mira cada botón que se ilumine.", 1.8))
@@ -366,7 +370,7 @@ def warmup(model: GazeModel, rounds: int = 8) -> GazeModel:   # 8 > 4: 1.45° ->
         print("calentamiento saltado")
         return model
     c = stage.rec.cols
-    ok = np.array(c["valid"]) & np.isin(np.array(c["phase"]), ("pursuit", "fix"))
+    ok = np.array(c["valid"]) & np.isin(np.array(c["phase"]), ("pursuit", "fix", "vor"))
     X, Y = np.array(c["features"])[ok], np.array(c["targets"], np.float32)[ok]
     P = np.array(c["patches"])[ok]
     print(f"calentamiento: {ok.sum()} muestras válidas · ajustando la red a tu postura…")

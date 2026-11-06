@@ -1,10 +1,13 @@
-"""`efg gesture`: 20 s to learn YOUR squint, so squint-to-click fires on it and not on blinks or smiles.
+"""`efg gesture`: ~25 s to learn YOUR click gesture, a long blink, so it fires on it and never on
+normal blinks.
 
-Records MediaPipe's blendshapes while you look normally, squint on cue (narrow the eyes, don't
-close them), blink on cue and smile on cue. The squint score is mean(eyeSquintLeft/Right) minus
-your normal baseline; the threshold goes halfway between the highest non-squint frames (99th
-percentile of normal + rest + blinks + smiles, with the same blink/smile gates the detector uses)
-and the lower quarter of the squint frames. Saved to data/gesture.json.
+Records MediaPipe's blendshapes while you look normally, blink normally on cue, and close your eyes
+for about half a second on cue. "Closed" = min(eyeBlinkLeft, eyeBlinkRight) above a threshold set
+halfway between your open eyes (99th percentile) and the middle of your long blinks. The hold time
+goes between your longest normal blink and your shortest long one. Saved to data/gesture.json.
+
+(Squinting was the first idea: for this user MediaPipe's eyeSquint score went DOWN when squinting
+and overlapped normal frames, so it is kept only as an option, mode "squint".)
 """
 
 from __future__ import annotations
@@ -14,30 +17,26 @@ import json
 import numpy as np
 
 from . import screen
-from .app import INTRO_BG, Segment, Stage, message
+from .app import Segment, Stage
 from .tracker import USER_MODEL
 
-BLINK_MAX, SMILE_MAX = 0.6, 0.35
-
-TEXT = {"g_normal": "Mira el punto con normalidad", "g_squint": "ENTRECIERRA los ojos (sin cerrarlos)",
-        "g_rest": "relaja", "g_blink": "PARPADEA", "g_smile": "SONRÍE"}
+TEXT = {"g_normal": "Mira el punto con normalidad", "g_rest": "relaja",
+        "g_blink": "PARPADEA normal", "g_long": "CIERRA los ojos medio segundo"}
 
 
 class GestureStage(Stage):
-    title = "Gesto de clic: entrecerrar los ojos (≈25 s)"
+    title = "Gesto de clic: parpadeo largo (≈25 s)"
     intro_text = ("Sigue las instrucciones del centro de la pantalla.\n"
-                  "Entrecerrar = achinar los ojos como para ver algo lejano, SIN llegar a cerrarlos.\n\n"
+                  "Cuando ponga CIERRA, cierra los dos ojos como medio segundo y ábrelos.\n\n"
                   "ESPACIO para empezar · ESC para salir")
 
     def __init__(self, W, H):
         c = (lambda t, x=W / 2, y=H / 2: (x, y))
         segs = [Segment("g_normal", 6.0, c, 1.0)]
-        for _ in range(5):
-            segs += [Segment("g_squint", 1.3, c, 0.0), Segment("g_rest", 1.3, c, 0.0)]
         for _ in range(4):
-            segs += [Segment("g_blink", 0.9, c, 0.0), Segment("g_rest", 0.9, c, 0.0)]
-        for _ in range(2):
-            segs += [Segment("g_smile", 1.6, c, 0.0), Segment("g_rest", 1.4, c, 0.0)]
+            segs += [Segment("g_blink", 1.0, c, 0.0), Segment("g_rest", 1.0, c, 0.0)]
+        for _ in range(5):
+            segs += [Segment("g_long", 1.6, c, 0.0), Segment("g_rest", 1.2, c, 0.0)]
         super().__init__(segs)
 
     def _draw(self, seg: Segment, lt: float) -> None:
@@ -45,9 +44,23 @@ class GestureStage(Stage):
         cv.delete("target")
         x, y = seg.target(lt)
         cv.create_oval(x - 6, y - 6, x + 6, y + 6, fill="#ff3b30", outline="", tags="target")
-        hot = seg.phase in ("g_squint", "g_blink", "g_smile")
+        hot = seg.phase in ("g_blink", "g_long")
         cv.create_text(x, y - 70, text=TEXT[seg.phase], fill="#e8a33d" if hot else "#9a9a9a",
                        font=("Segoe UI", 26 if hot else 16), tags="target")
+
+
+def _runs(closed: np.ndarray, t: np.ndarray, seg: np.ndarray) -> list[tuple[int, float]]:
+    """(segment, duration) of every run of closed frames."""
+    out, start = [], None
+    for i in range(len(closed)):
+        if closed[i] and start is None:
+            start = i
+        end = (not closed[i]) or i == len(closed) - 1 or seg[i + 1] != seg[i]
+        if start is not None and end:
+            j = i if closed[i] else i - 1
+            out.append((int(seg[start]), float(t[j] - t[start]) + 0.05))     # +1 frame
+            start = None
+    return out
 
 
 def analyse(rec) -> dict | None:
@@ -59,26 +72,28 @@ def analyse(rec) -> dict | None:
     B = np.array(rec.cols["blendshapes"], float)
     ph = np.array(rec.cols["phase"])
     lt = np.array(rec.cols["local_t"])
-    sq = B[:, [ix["eyeSquintLeft"], ix["eyeSquintRight"]]].mean(1)
+    t = np.array(rec.cols["t"], float)
+    seg = np.array(rec.cols["seg"])
     bl = B[:, [ix["eyeBlinkLeft"], ix["eyeBlinkRight"]]].min(1)
-    sm = B[:, [ix["mouthSmileLeft"], ix["mouthSmileRight"]]].mean(1)
-    base = float(np.median(sq[ph == "g_normal"]))
-    score = sq - base
-    gated = (bl < BLINK_MAX) & (sm < SMILE_MAX)          # what the detector would even consider
-    pos = score[(ph == "g_squint") & (lt >= 0.4) & gated]
-    neg = score[np.isin(ph, ("g_normal", "g_rest", "g_blink", "g_smile")) & gated]
-    if len(pos) < 10 or len(neg) < 30:
+    open_hi = float(np.percentile(bl[ph == "g_normal"], 99))
+    long_mid = bl[(ph == "g_long") & (lt > 0.3) & (lt < 0.8)]
+    if len(long_mid) < 5:
         return None
-    hi_neg, lo_pos = float(np.percentile(neg, 99)), float(np.percentile(pos, 25))
-    separable = lo_pos > hi_neg
-    thr = (hi_neg + lo_pos) / 2 if separable else hi_neg + 0.03
-    caught = float(np.mean(pos > thr))
-    false = float(np.mean(neg > thr))
-    return {"thr": round(thr, 3), "hold_s": 0.3, "baseline": round(base, 3), "separable": bool(separable),
-            "squint_p25": round(lo_pos, 3), "other_p99": round(hi_neg, 3),
-            "squint_frames_caught": round(caught, 3), "other_frames_over": round(false, 4),
-            "blinks_gated": float(np.mean(bl[ph == "g_blink"] >= BLINK_MAX)),
-            "smiles_gated": float(np.mean(sm[ph == "g_smile"] >= SMILE_MAX))}
+    long_med = float(np.median(long_mid))
+    closed_thr = (open_hi + long_med) / 2
+    runs = _runs(bl > closed_thr, t, seg)
+    phase_of = {int(s): p for s, p in zip(seg, ph)}
+    nat = [d for s, d in runs if phase_of.get(s) in ("g_blink", "g_normal", "g_rest")]
+    lng = [max([d for s2, d in runs if s2 == s] or [0.0]) for s in np.unique(seg[ph == "g_long"])]
+    nat_hi = float(max(nat)) if nat else 0.25
+    lng_lo = float(np.percentile(lng, 20)) if lng else 0.0
+    separable = long_med > open_hi + 0.1 and lng_lo > nat_hi + 0.1
+    hold = float(np.clip((nat_hi + lng_lo) / 2, 0.35, 0.8)) if separable else 0.5
+    return {"mode": "blink", "closed_thr": round(closed_thr, 3), "hold_s": round(hold, 2), "separable": bool(separable),
+            "open_p99": round(open_hi, 3), "long_median": round(long_med, 3),
+            "normal_blinks_s": [round(d, 2) for d in sorted(nat)], "long_blinks_s": [round(d, 2) for d in lng],
+            "long_caught": round(float(np.mean(np.array(lng) >= hold)) if lng else 0.0, 2),
+            "normal_over": round(float(np.mean(np.array(nat) >= hold)) if nat else 0.0, 2)}
 
 
 def gesture() -> None:
@@ -96,8 +111,7 @@ def gesture() -> None:
     (USER_MODEL.parent / "gesture.json").write_text(json.dumps(rep, indent=2), encoding="utf-8")
     print(json.dumps(rep, indent=2))
     if rep["separable"]:
-        print(f"bien: tu entrecerrar se distingue (umbral {rep['thr']}); "
-              f"{100 * rep['squint_frames_caught']:.0f}% de los fotogramas de entrecerrar lo superan, "
-              f"{100 * rep['other_frames_over']:.2f}% de los demás")
+        print(f"bien: un parpadeo de {rep['hold_s']} s o más hace clic; tus parpadeos normales no llegan "
+              f"({100 * rep['long_caught']:.0f}% de los largos lo superan, {100 * rep['normal_over']:.0f}% de los normales)")
     else:
-        print("ojo: tu entrecerrar se solapa con gestos normales; prueba a entrecerrar más marcado y repite")
+        print("ojo: tus parpadeos largos y normales se parecen; repite cerrando un poco más de tiempo")
