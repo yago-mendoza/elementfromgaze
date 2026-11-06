@@ -293,6 +293,23 @@ class AppearanceModel:
         return np.concatenate(out)
 
 
+class AppearanceEnsemble:
+    """Average of a few eye networks trained the same way (different epochs / seeds). Measured on
+    held-out sessions (2026-11-06): 2 networks (20 + 40 epochs) vs the 20-epoch one alone — real
+    close-posture clicks without warm-up 2.43° -> 2.03°, cold sessions 2.75° -> 2.70°, warmed
+    1.34° -> 1.30°: the only variant that was not worse anywhere. Twice the compute (~6 ms/frame)."""
+
+    def __init__(self, members: list):
+        self.members = list(members)
+
+    def predict(self, P, X: np.ndarray, tta: bool = True) -> np.ndarray:
+        return np.mean([m.predict(P, X, tta) for m in self.members], 0)
+
+    @property
+    def net(self):                      # code that inspects one network (geometry etc.) sees the first
+        return self.members[0].net
+
+
 def finetune_copy(model: AppearanceModel, P, X: np.ndarray, Y: np.ndarray,
                   steps: int = 40, batch: int = 64, lr: float = 5e-4, seed: int = 0,
                   freeze_conv: bool = True) -> AppearanceModel:
@@ -307,6 +324,9 @@ def finetune_copy(model: AppearanceModel, P, X: np.ndarray, Y: np.ndarray,
     torch, _ = _torch()
     import torch.nn.functional as F
 
+    if isinstance(model, AppearanceEnsemble):       # fine-tune every member the same way
+        return AppearanceEnsemble([finetune_copy(mm, P, X, Y, steps, batch, lr, seed + 97 * i, freeze_conv)
+                                   for i, mm in enumerate(model.members)])
     m = copy.deepcopy(model)
     net = m.net
     net.eval()                        # BatchNorm keeps its statistics; no dropout noise in a few steps
