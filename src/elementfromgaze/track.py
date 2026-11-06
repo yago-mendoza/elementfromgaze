@@ -241,7 +241,7 @@ def check_correction(model: GazeModel, rec, W, H) -> dict | None:
         return None
     pred = model.predict_full(np.array(c["features"])[k], np.array(c["patches"])[k])
     Y, T, S = np.array(c["targets"], float)[k], np.array(c["t"])[k], seg[k]
-    aff, errs = AffineKalman(W, H), []
+    aff, errs = AffineKalman.for_check(W, H), []
     for sg in np.unique(S):
         q = S == sg
         if q.sum() < 5:

@@ -211,10 +211,11 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
             recheck["on"] = False
             if len(res) >= 3:
                 with lock:
-                    aff.forget()
+                    chk = AffineKalman.for_check(W, H)       # clean labels: looser gain prior
+                    for p, lab, t in res:
+                        chk.add(p, lab, t)
+                    aff.adopt(chk)
                     corr.forget()
-                    for k, (p, lab, t) in enumerate(res):
-                        aff.add(p, lab, t)
                     desc = aff.describe()
                 e = np.median([np.linalg.norm(p - lab) for p, lab, _ in res]) / screen.px_per_degree()
                 print(f"   recalibrado con {len(res)} botones (error antes {e:.2f}°) · {desc}")

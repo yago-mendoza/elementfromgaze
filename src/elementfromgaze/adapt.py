@@ -166,6 +166,20 @@ class AffineKalman:
         self.theta = np.array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0])
         self.P = self.P0.copy()
 
+    # Deliberate button checks (warm-up's 9 buttons, Ctrl+Alt+R) are clean labels, unlike clicks:
+    # they get a looser gain prior. Measured on 5 held-out pairs x 5 models: check gain sd 0.05 ->
+    # 1.35°, 0.1 -> 1.24°, 0.2 -> 1.15° but worse on the tired-eyes session; 0.1 it is.
+    CHECK_GAIN_SD, CHECK_GATE_PX = 0.1, 650.0
+
+    @classmethod
+    def for_check(cls, W: int, H: int) -> "AffineKalman":
+        k = cls(W, H, prior_gain_sd=cls.CHECK_GAIN_SD, abs_gate_px=cls.CHECK_GATE_PX)
+        return k
+
+    def adopt(self, other: "AffineKalman") -> None:
+        """Take another filter's estimate (e.g. a check) but keep this one's own prior / gates."""
+        self.theta, self.P = other.theta.copy(), other.P.copy()
+
     def state(self) -> dict:
         return {"theta": self.theta.copy(), "P": self.P.copy()}
 
