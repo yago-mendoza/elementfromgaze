@@ -35,8 +35,11 @@ VK_KEYS = {"left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28, "r": 0x52}
 NUDGE_PX = 12            # Ctrl+Alt+arrow: move the dot this much (your "+n")
 RECHECK_POINTS = [(0.5, 0.5), (0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9)]
 RECHECK_S, RECHECK_SETTLE_S = 1.4, 0.5
-LABEL_DELAY_S = 0.12
-WINDOWS = {"click": (-0.35, 0.05, 1.0), "caret": (-0.25, 0.10, 0.6)}  # from, to, confidence
+# Frames are time-stamped when PROCESSED, ~0.13 s after exposure (fitted on 4 track sessions:
+# best lag 0.10-0.16 s). Event windows below are in EYE time and shifted by this to sample time.
+LATENCY_S = 0.13
+LABEL_DELAY_S = 0.55     # process an event once the samples of its whole window exist
+WINDOWS = {"click": (-0.30, -0.05, 1.0), "caret": (0.0, 0.35, 0.6)}  # eye time: from, to, confidence
 # "gaze": labels posted by a web page when its attractor posterior is unambiguous (see web/efg.js);
 # window and confidence come with each label
 KEY_MIN_GAP_S = 0.35
@@ -305,8 +308,13 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     print("punto rojo activo · aprende de clics y escritura" if learn else "punto rojo activo",
           "· Ctrl+Alt+G salir · Ctrl+Alt+flechas empujar · Ctrl+Alt+R recalibrar (5 botones)")
 
-    def absorb(kind: str, t_ev: float, pos, window: tuple | None = None) -> None:
-        lo, hi, conf = window or WINDOWS[kind]
+    def absorb(kind: str, t_ev: float, pos, window: tuple | None = None, sd_px: tuple | None = None) -> None:
+        """window given explicitly = already in sample time (web labels); else WINDOWS (eye time)."""
+        if window is None:
+            lo, hi, conf = WINDOWS[kind]
+            lo, hi = lo + LATENCY_S, hi + LATENCY_S
+        else:
+            lo, hi, conf = window
         with lock:
             rows = [r for r in recent if t_ev + lo <= r[0] <= t_ev + hi and not r[4]]
         if len(rows) < 3:
@@ -314,7 +322,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         p = np.median([r[1] for r in rows], axis=0)
         h = np.median([r[2] for r in rows], axis=0)
         with lock:
-            ok = aff.add(p, pos, t_ev, conf)
+            ok = aff.add(p, pos, t_ev, conf, sd_px)
             if ok:
                 corr.add(aff.apply(p), h, pos, t_ev, conf)
                 if rows[0][3].patches is not None:
@@ -349,6 +357,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         if recheck["on"]:
             recheck_tick(now)
         if watcher:
+            typing["last_key"] = max(typing["last_key"], watcher.last_key)   # live: the label queue lags 0.55 s
             for ev in watcher.drain_ready(now, LABEL_DELAY_S):
                 if ev.kind != "click":
                     typing["last_key"] = max(typing["last_key"], ev.t)
@@ -365,7 +374,8 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
             while not server.labels.empty():
                 lab = server.labels.get_nowait()
                 if 0 <= lab["x"] < W and 0 <= lab["y"] < H and 0 < lab["t1"] - lab["t0"] <= 2.0:
-                    absorb("gaze", lab["t1"], (lab["x"], lab["y"]), (lab["t0"] - lab["t1"], 0.0, lab["conf"]))
+                    sd = (lab["sdx"], lab["sdy"]) if "sdx" in lab else None
+                    absorb("gaze", lab["t1"], (lab["x"], lab["y"]), (lab["t0"] - lab["t1"], 0.0, lab["conf"]), sd)
         maybe_tune(now)
         if warm_pose and now - drift["checked"] > 5 and len(posture) > 200:
             drift["checked"] = now

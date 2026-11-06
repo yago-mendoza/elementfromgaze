@@ -147,7 +147,7 @@
   let gaze = null, lastT = 0, scores = new Map(), current = null, since = 0, dwellFired = false, current_p = 0;
   let snap = null, snapP = 0, snapSince = 0, snapServerT = 0, runnerUp = 0, serverT = 0;
   const learnedAt = new WeakMap(), history = [], stats = { labels: 0 };
-  let lastSd = [50, 70];
+  let lastSd = [50, 70], lastSdScreen = 55;
   function step(m) {
     const now = performance.now();
     serverT = m.t;
@@ -158,7 +158,7 @@
     if (!m.ok || map.ox === null) { gaze = null; setSnap(null, 0, now, m); return decide(now); }
     const g = toClient(m.x, m.y);
     const sx = ((m.sdx || m.sd) / map.scale) * opt.sdScale, sy = ((m.sdy || m.sd) / map.scale) * opt.sdScale;
-    gaze = g; lastSd = [sx, sy];
+    gaze = g; lastSd = [sx, sy]; lastSdScreen = m.sd || 55;
     // attractors first: closed form
     const post = attractorPosterior(g, sx, sy, now);
     const cur = snap && post.find((p) => p[0] === snap);
@@ -191,8 +191,12 @@
     learnedAt.set(snap, now);
     const r = snap.getBoundingClientRect(), c = toScreen(r.left + r.width / 2, r.top + r.height / 2);
     const t1 = serverT, t0 = Math.max(snapServerT + 0.15, t1 - 1.2);
+    // label noise per axis, screen px: where inside the element you looked (uniform: w²/12) on top
+    // of a small base; a wide, short button pins y far better than x
+    const base = 0.5 * lastSdScreen, ws = r.width * map.scale, hs = r.height * map.scale;
+    const sdx = Math.sqrt(base * base + ws * ws / 12), sdy = Math.sqrt(base * base + hs * hs / 12);
     stats.labels++;
-    fetch(ORIGIN + "/label", { method: "POST", body: JSON.stringify({ t0, t1, x: c.x, y: c.y, conf: opt.learnConf, p: snapP, label: label(snap) }) }).catch(() => {});
+    fetch(ORIGIN + "/label", { method: "POST", body: JSON.stringify({ t0, t1, x: c.x, y: c.y, sdx, sdy, conf: opt.learnConf, p: snapP, label: label(snap) }) }).catch(() => {});
   }
   function decide(now) {
     let next, np;

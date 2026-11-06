@@ -92,6 +92,7 @@ class InputWatcher:
 
     def __init__(self) -> None:
         self.events: "deque[InputEvent]" = deque(maxlen=512)
+        self.last_key = -1e9
         self._tid = 0
         self._ready = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -113,7 +114,8 @@ class InputWatcher:
 
         def key_proc(n, wparam, lparam):
             if n == 0 and wparam in (WM_KEYDOWN, WM_SYSKEYDOWN):
-                self.events.append(InputEvent("key", time.monotonic()))
+                self.last_key = time.monotonic()
+                self.events.append(InputEvent("key", self.last_key))
             return user32.CallNextHookEx(None, n, wparam, lparam)
 
         self._mouse_cb, self._key_cb = HOOKPROC(mouse_proc), HOOKPROC(key_proc)  # keep alive

@@ -63,6 +63,14 @@ class GazeServer:
                         self._head(400, "text/plain")
                         return
                     lab["conf"] = min(max(lab["conf"], 0.05), 0.5)      # a page can never outweigh a click
+                    for k in ("sdx", "sdy"):                              # optional per-axis noise (px)
+                        if k in rec:
+                            try:
+                                lab[k] = min(max(float(rec[k]), 10.0), 400.0)
+                            except (TypeError, ValueError):
+                                pass
+                    if ("sdx" in lab) != ("sdy" in lab):
+                        lab.pop("sdx", None), lab.pop("sdy", None)
                     lab["label"] = str(rec.get("label", ""))[:40]
                     srv.labels.put(lab)
                     self._head(204, "text/plain")

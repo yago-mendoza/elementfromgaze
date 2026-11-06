@@ -141,12 +141,15 @@ class AffineKalman:
         z = self._H(q) @ self.theta
         return np.array([(z[0] + 0.5) * self.W, (z[1] + 0.5) * self.H])
 
-    def add(self, p, label, t: float, confidence: float = 1.0) -> bool:
+    def add(self, p, label, t: float, confidence: float = 1.0, sd_px: tuple | None = None) -> bool:
+        """sd_px: this label's own noise per axis (e.g. a wide, short button pins y much better
+        than x); default label_sd_px on both."""
         self._predict_to(t)
         q, y = self._norm(p), self._norm(label)
         Hm = self._H(q)
         innov = y - Hm @ self.theta
-        S = Hm @ self.P @ Hm.T + self.R0 / max(confidence, 1e-3)
+        R = self.R0 if sd_px is None else np.diag([(sd_px[0] / self.W) ** 2, (sd_px[1] / self.H) ** 2])
+        S = Hm @ self.P @ Hm.T + R / max(confidence, 1e-3)
         m2 = float(innov @ np.linalg.solve(S, innov))
         innov_px = np.hypot(innov[0] * self.W, innov[1] * self.H)
         if m2 > self.gate ** 2 or innov_px > self.abs_gate_px:
