@@ -112,7 +112,11 @@ class AffineKalman:
     # change, heavy-tailed labels: clicks while looking elsewhere, up to 8° off) sd 0.1 HURT
     # (2.67° vs 2.35° shift-only), 0.05 was neutral (2.37°): 0.05 it is, and the absolute gate went
     # 650 -> 400 px (6.5°) so those clicks are rejected.
-    def __init__(self, W: int, H: int, label_sd_px: float = 120.0, prior_gain_sd: float = 0.05,
+    # Then the user saw it: many clicks in one spot fixed that spot and "rotated everything else".
+    # A cluster can't tell shift from gain; 25 corner clicks left the whole screen at 0.73° with gain
+    # sd 0.05 vs 0.59° shift-only (1.82° with 0.1). So clicks/caret move the SHIFT only (sd 1e-3);
+    # gains come from the spread-out button checks (for_check, 0.1), which then stay put.
+    def __init__(self, W: int, H: int, label_sd_px: float = 120.0, prior_gain_sd: float = 1e-3,
                  prior_shift_sd: float = 0.2, forget_s: float = 600.0, gate: float = 5.0,
                  abs_gate_px: float = 400.0):
         self.W, self.H = float(W), float(H)

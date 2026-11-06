@@ -49,6 +49,7 @@ TYPING_RADIUS_PX = 240   # ~4°: below this, movement while typing is treated as
 TYPING_HOLD_S = 0.8
 TUNE_EVERY = 60          # new labelled samples (~6 clicks or ~10 caret labels) per fine-tune
 TUNE_MIN_GAP_S = 20.0
+TUNE_MIN_ZONES = 4       # of a 3x3 grid: the network only generalises from spread-out labels
 
 
 def _hotkey_down() -> bool:
@@ -322,9 +323,24 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         if (not can_tune or tune["busy"] or tune["prior"] is None or tune["n_new"] < TUNE_EVERY
                 or now - tune["last"] < TUNE_MIN_GAP_S):
             return
-        tune["busy"], tune["n_new"] = True, 0
         k = min(len(tune["X"]), 1500)
         Xn, Yn, Pn = np.array(tune["X"][-k:]), np.array(tune["Y"][-k:]), np.array(tune["P"][-k:])
+        # Clicks piled up in one spot only say something about THAT spot: fine-tuning on them bent
+        # the rest of the screen ("it rotates everything else", user, 2026-11-06). The network only
+        # adapts once the labels cover >= 4 of 9 screen zones, and each zone weighs the same.
+        zone = (np.clip(Yn[:, 0] / W * 3, 0, 2.999).astype(int) * 3 + np.clip(Yn[:, 1] / H * 3, 0, 2.999).astype(int))
+        zones, counts = np.unique(zone, return_counts=True)
+        if len(zones) < TUNE_MIN_ZONES:
+            tune["last"] = now          # re-check after TUNE_MIN_GAP_S, not every frame
+            if not tune.get("told"):
+                print(f"   la red espera clics más repartidos ({len(zones)}/9 zonas; hacen falta {TUNE_MIN_ZONES})")
+                tune["told"] = True
+            return
+        cap = int(max(np.median(counts), 20))
+        keep = np.concatenate([np.where(zone == z)[0][-cap:] for z in zones])
+        Xn, Yn, Pn = Xn[keep], Yn[keep], Pn[keep]
+        k = len(keep)
+        tune["busy"], tune["n_new"], tune["told"] = True, 0, False
 
         def work():
             import copy
