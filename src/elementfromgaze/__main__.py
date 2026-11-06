@@ -6,6 +6,12 @@
   efg eval         full-screen accuracy test on random points
   efg targets      buttons light up, you look; % of buttons picked right per size
   efg dot          red dot over the whole screen where you look (Ctrl+Alt+G quits)
+  efg track        follow a moving ring; starts with the posture warm-up (--rewarm redoes it)
+  efg control      gaze over the whole desktop, snapping to any app's buttons (--click: long blink)
+  efg gesture      record your long blink once, so --click can tell it from normal blinks
+
+Run it as `python -m elementfromgaze ...` if Windows blocks efg.exe (Smart App Control).
+Ctrl+Alt+R recalibrates (~45 s), Ctrl+Alt+arrows nudge the dot, Ctrl+Alt+G quits.
 """
 
 from __future__ import annotations
@@ -76,16 +82,16 @@ def main() -> None:
     tg.add_argument("--no-warmup", action="store_true")
     tg.add_argument("--rewarm", action="store_true")
     sub.add_parser("ir", help="live view of the infrared camera")
-    ct = sub.add_parser("control", help="gaze over the whole desktop: snaps to buttons of any app; --click: squint to click")
-    ct.add_argument("--click", action="store_true", help="squint (~0.3 s) to click the highlighted button")
+    ct = sub.add_parser("control", help="gaze over the whole desktop: snaps to buttons of any app; --click: long blink to click")
+    ct.add_argument("--click", action="store_true", help="long blink (~0.5 s, eyes shut) clicks the highlighted button; calibrate it with efg gesture")
     ct.add_argument("--dot", action="store_true", help="also draw the red dot")
     ct.add_argument("--serve", action="store_true")
     ct.add_argument("--no-warmup", action="store_true")
     ct.add_argument("--rewarm", action="store_true")
-    sub.add_parser("gesture", help="20 s: record normal / squint / blink / smile to set the squint-click threshold")
+    sub.add_parser("gesture", help="~20 s: record normal blinks and long blinks to set the click threshold")
     dt = sub.add_parser("dot")
     dt.add_argument("--no-learn", action="store_true", help="do not learn from clicks/typing")
-    dt.add_argument("--no-warmup", action="store_true", help="skip the ~45 s posture warm-up")
+    dt.add_argument("--no-warmup", action="store_true", help="skip the ~80 s posture warm-up")
     dt.add_argument("--rewarm", action="store_true", help="redo the warm-up even if one is <30 min old")
     dt.add_argument("--serve", action="store_true", help="stream the gaze to web pages (http://127.0.0.1:8770, demo at /demo)")
     dt.add_argument("--no-dot", action="store_true", help="don't draw the red dot (e.g. with --serve)")
