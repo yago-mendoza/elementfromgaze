@@ -76,6 +76,13 @@ def main() -> None:
     tg.add_argument("--no-warmup", action="store_true")
     tg.add_argument("--rewarm", action="store_true")
     sub.add_parser("ir", help="live view of the infrared camera")
+    ct = sub.add_parser("control", help="gaze over the whole desktop: snaps to buttons of any app; --click: squint to click")
+    ct.add_argument("--click", action="store_true", help="squint (~0.3 s) to click the highlighted button")
+    ct.add_argument("--dot", action="store_true", help="also draw the red dot")
+    ct.add_argument("--serve", action="store_true")
+    ct.add_argument("--no-warmup", action="store_true")
+    ct.add_argument("--rewarm", action="store_true")
+    sub.add_parser("gesture", help="20 s: record normal / squint / blink / smile to set the squint-click threshold")
     dt = sub.add_parser("dot")
     dt.add_argument("--no-learn", action="store_true", help="do not learn from clicks/typing")
     dt.add_argument("--no-warmup", action="store_true", help="skip the ~45 s posture warm-up")
@@ -99,6 +106,14 @@ def main() -> None:
     if a.cmd == "targets":
         from .targets import targets
         targets(a.note, warm=not a.no_warmup, rewarm=a.rewarm, show=a.show)
+        return
+    if a.cmd == "control":
+        from . import app as _app
+        _app.dot(warm=not a.no_warmup, rewarm=a.rewarm, serve=a.serve, show=a.dot, control=True, click=a.click)
+        return
+    if a.cmd == "gesture":
+        from .gesture import gesture
+        gesture()
         return
     if a.cmd == "ir":
         from .ircam import view

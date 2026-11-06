@@ -272,13 +272,16 @@ class Spring2D:
         self.v = np.zeros(2)
 
     def reset(self, p) -> None:
-        self.p, self.v = np.asarray(p, float).copy(), np.zeros(2)
+        self.p = np.asarray(p, float).copy()
+        self.v = np.zeros_like(self.p)
 
     def __call__(self, target, dt: float) -> np.ndarray:
         target = np.asarray(target, float)
         if self.p is None:
             self.reset(target)
             return self.p.copy()
+        if self.v.shape != target.shape:
+            self.v = np.zeros_like(target)
         w, dt = self.omega, min(max(dt, 0.0), 0.1)
         e0 = self.p - target
         c = self.v + w * e0

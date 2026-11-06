@@ -64,7 +64,7 @@ SD_X_DEG, SD_Y_DEG = 0.7, 1.0   # same test, per axis: vertical is the hard one
 
 
 def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = False, serve: bool = False,
-        show: bool = True) -> None:
+        show: bool = True, control: bool = False, click: bool = False) -> None:
     if not USER_MODEL.exists():
         raise SystemExit("no hay modelo todavía: corre `efg calibrate` primero")
     model = GazeModel.load()
@@ -81,6 +81,17 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         print(f"servidor de mirada en {server.url} · página de prueba: {server.url}/demo")
     ppd = screen.px_per_degree()
     sd_px, sdx_px, sdy_px = SD_DEG * ppd, SD_X_DEG * ppd, SD_Y_DEG * ppd
+    scanner = snapper = squint = None
+    ctl = {"frozen": None, "fire": None, "snap": None, "clicks": 0}
+    if control:
+        from .desktop import GESTURE_FILE, Snapper, SquintClick, UIAScanner, load_gesture
+        scanner, snapper = UIAScanner(W, H), Snapper()
+        gest = load_gesture(USER_MODEL.parent / GESTURE_FILE)
+        if click:
+            if not gest:
+                print("   aviso: sin `efg gesture` uso un umbral genérico para entrecerrar; mejor grábalo (20 s)")
+        print("control del escritorio: botones de la ventana activa y la barra de tareas"
+              + (" · ENTRECIERRA los ojos ~0,3 s para hacer clic" if click else " · (clic desactivado: --click)"))
 
     aff = AffineKalman.seeded(W, H, model)   # global deformation (fast, few labels); starts from the warm-up check
     corr = ResidualCorrector()       # local residual field on top (needs many labels)
@@ -107,6 +118,17 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     TRACE_MAX = 30 * 60 * 20
 
     def on_sample(s: Sample) -> None:
+        nonlocal squint
+        if control and click and s.blendshapes is not None:
+            if squint is None:
+                from .features import BLENDSHAPE_NAMES
+                g = load_gesture(USER_MODEL.parent / "gesture.json")
+                squint = SquintClick(list(BLENDSHAPE_NAMES), thr=g.get("thr", 0.25), hold_s=g.get("hold_s", 0.3))
+            started, fire = squint(s.blendshapes, s.t)
+            if started:
+                ctl["frozen"] = ctl["snap"]        # lids narrowing shift the estimate: decide NOW
+            if fire and ctl["frozen"] is not None:
+                ctl["fire"] = ctl["frozen"]
         base = state["model"].predict_full(s.features, s.patches)[0]
         h = pose_vector(head_euler(s.matrix), float(s.features[6]))
         is_blink = blinker(lid_opening(s), s.eye_blink)
@@ -154,6 +176,13 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     canvas.pack(fill="both", expand=True)
     dot_id = canvas.create_oval(0, 0, 0, 0, fill="#ff2d20", outline="#ffffff", width=2, state="hidden")
     spring = Spring2D(omega=28.0)        # display physics: glide, don't teleport
+    lens_id = canvas.create_rectangle(0, 0, 0, 0, outline="#4fc3ff", width=3, state="hidden")
+    ring_id = canvas.create_arc(0, 0, 0, 0, start=90, extent=0, style="arc", outline="#e8a33d", width=4, state="hidden")
+    lens_spring = Spring2D(omega=30.0)
+    lens_spring.p = None
+
+    def looking_away_now(now: float) -> bool:
+        return now - latest.get("off_t", -1e9) < 0.25
     keys_prev: dict = {}
     recheck = {"on": False, "i": 0, "t0": 0.0, "got": [], "res": []}
 
@@ -356,6 +385,35 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         looking_away = now - latest.get("off_t", -1e9) < 0.25
         dt = now - tick_t[0]
         tick_t[0] = now
+        if control:
+            els, rects = scanner.snapshot()
+            g = latest.get("p") if (latest.get("p") is not None and now - latest.get("t", -1e9) < 0.6
+                                    and not looking_away_now(now)) else None
+            r = snapper(None if g is None else np.asarray(g, float), sdx_px, sdy_px, els, rects, W * H)
+            ctl["snap"] = r
+            if r is not None:
+                tgt = [r[0] - 5, r[1] - 5, r[2] + 5, r[3] + 5]
+                if canvas.itemcget(lens_id, "state") == "hidden":
+                    lens_spring.reset(tgt)
+                l, t_, rr, b = lens_spring(tgt, dt)
+                canvas.coords(lens_id, l, t_, rr, b)
+                canvas.itemconfigure(lens_id, state="normal")
+            else:
+                canvas.itemconfigure(lens_id, state="hidden")
+            prog = squint.progress if squint is not None else 0.0
+            if prog > 0 and ctl["frozen"] is not None:
+                fx0, fy0, fx1, fy1 = ctl["frozen"]
+                cx, cy, rad = (fx0 + fx1) / 2, (fy0 + fy1) / 2, 0.5 * max(fx1 - fx0, fy1 - fy0) + 14
+                canvas.coords(ring_id, cx - rad, cy - rad, cx + rad, cy + rad)
+                canvas.itemconfigure(ring_id, extent=-359.9 * prog, state="normal")
+            else:
+                canvas.itemconfigure(ring_id, state="hidden")
+            if ctl["fire"] is not None:
+                fx0, fy0, fx1, fy1 = ctl["fire"]
+                ctl["fire"], ctl["frozen"] = None, None
+                from .desktop import click_at
+                click_at((fx0 + fx1) / 2, (fy0 + fy1) / 2)
+                ctl["clicks"] += 1
         if show and p is not None and now - latest["t"] < 0.6 and not looking_away and not recheck["on"]:
             if canvas.itemcget(dot_id, "state") == "hidden":
                 spring.reset(p)          # reappearing: start where the gaze is, don't fly in
@@ -371,6 +429,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
                 desc = aff.describe()
             print(f"   {worker.stats()} · etiquetas ✓{aff.accepted} ✗{aff.rejected} · "
                   f"teclas sin caret {stats['keys_no_caret']} · por mirada {stats.get('gaze_labels', 0)} · {desc}"
+                  + (f" · {len(scanner.elements)} botones ({scanner.scan_ms:.0f} ms)" + (f" · {scanner.error}" if scanner.error else "") if scanner else "")
                   + (f" · red ajustada {tune['fits']} veces" if can_tune else ""))
         root.after(16, tick)
 
@@ -388,6 +447,9 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         worker.close()
         if len(trace):
             print("registro de diagnóstico:", trace.save(W, H, "dotlog", "traza por fotograma de `efg dot`", worker.stats()))
+        if scanner is not None:
+            scanner.close()
+            print(f"control: {ctl['clicks']} clics con la mirada")
         if len(rec):
             path = rec.save(W, H, "implicit", "clics y escritura durante `efg dot`", worker.stats())
             print(f"guardadas {stats['labels']} etiquetas implícitas ({len(rec)} muestras) en {path}")

@@ -38,6 +38,12 @@ WH_KEYBOARD_LL, WH_MOUSE_LL = 13, 14
 WM_KEYDOWN, WM_SYSKEYDOWN = 0x0100, 0x0104
 WM_LBUTTONDOWN, WM_RBUTTONDOWN = 0x0201, 0x0204
 WM_QUIT = 0x0012
+LLMHF_INJECTED = 0x01
+
+
+class MSLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [("pt", wintypes.POINT), ("mouseData", wintypes.DWORD), ("flags", wintypes.DWORD),
+                ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
 
 
 class GUITHREADINFO(ctypes.Structure):
@@ -100,7 +106,9 @@ class InputWatcher:
 
         def mouse_proc(n, wparam, lparam):
             if n == 0 and wparam in (WM_LBUTTONDOWN, WM_RBUTTONDOWN):
-                self.events.append(InputEvent("click", time.monotonic(), cursor_position()))
+                info = ctypes.cast(lparam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
+                if not info.flags & LLMHF_INJECTED:      # synthetic clicks (e.g. our squint-click) are not labels
+                    self.events.append(InputEvent("click", time.monotonic(), cursor_position()))
             return user32.CallNextHookEx(None, n, wparam, lparam)
 
         def key_proc(n, wparam, lparam):
