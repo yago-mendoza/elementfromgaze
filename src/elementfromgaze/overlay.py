@@ -67,7 +67,11 @@ SD_X_DEG, SD_Y_DEG = 0.7, 1.0   # same test, per axis: vertical is the hard one
 
 
 def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = False, serve: bool = False,
-        show: bool = True, control: bool = False, click: bool = False) -> None:
+        show: bool = True, control: bool = False, click: bool = False, guest: bool = False) -> None:
+    """guest: someone else is in front of the camera — no learning, nothing saved, no warm-up
+    stored (their eyes must never end up in your model)."""
+    if guest:
+        learn = False
     if not USER_MODEL.exists():
         raise SystemExit("no hay modelo todavía: corre `efg calibrate` primero")
     model = GazeModel.load()
@@ -507,12 +511,14 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         if watcher:
             watcher.stop()
         worker.close()
-        if len(trace):
+        if guest:
+            print("modo invitado: no se guarda nada")
+        elif len(trace):
             print("registro de diagnóstico:", trace.save(W, H, "dotlog", "traza por fotograma de `efg dot`", worker.stats()))
         if scanner is not None:
             scanner.close()
             print(f"control: {ctl['clicks']} clics con la mirada")
-        if len(rec):
+        if len(rec) and not guest:
             path = rec.save(W, H, "implicit", "clics y escritura durante `efg dot`", worker.stats())
             print(f"guardadas {stats['labels']} etiquetas implícitas ({len(rec)} muestras) en {path}")
             print("corre `efg train` para incorporarlas al modelo base")
