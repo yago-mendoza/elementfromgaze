@@ -1,7 +1,9 @@
 """Local gaze server for web pages: `efg dot --serve`.
 
   GET /gaze     Server-Sent Events, one JSON message per camera frame:
-                {"t", "x", "y", "ok", "cx", "cy", "sd", "W", "H"}  (physical screen pixels;
+                {"t", "x", "y", "ok", "cx", "cy", "sd", "sdx", "sdy", "W", "H",
+                 "rx", "ry" (unsmoothed corrected gaze), "ey" (vertical correction applied),
+                 "gen" (bumps whenever the engine's correction is reset/replaced)}  (physical screen pixels;
                 cx/cy = OS cursor, which the page uses to learn its own screen -> viewport mapping)
   GET /efg.js   the browser side: window.efg.elementFromGaze(), gaze events, debug overlay
   GET /demo     a test page with buttons, a pie menu and text
@@ -72,6 +74,8 @@ class GazeServer:
                     if ("sdx" in lab) != ("sdy" in lab):
                         lab.pop("sdx", None), lab.pop("sdy", None)
                     lab["label"] = str(rec.get("label", ""))[:40]
+                    lab["axis"] = "y" if rec.get("axis") == "y" else "xy"          # reading: vertical only
+                    lab["kind"] = "read" if rec.get("kind") == "read" else "gaze"
                     srv.labels.put(lab)
                     self._head(204, "text/plain")
                     return

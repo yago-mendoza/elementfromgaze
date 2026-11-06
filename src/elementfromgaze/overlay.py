@@ -106,7 +106,9 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     fixf_typing = FixationFilter(radius=TYPING_RADIUS_PX, window=20)
     typing = {"last_key": -1e9}
     lock = threading.Lock()
-    recent: "deque[tuple]" = deque(maxlen=60)   # (t, base, h, sample, blink)
+    # (t, base, h, sample, blink): 15 s, because reading labels are decided 2-10 s after the line was read
+    recent: "deque[tuple]" = deque(maxlen=450)
+    gen = {"n": 0}     # bumped whenever the correction is reset/replaced: pages re-sync their own filters
     posture: "deque[tuple]" = deque(maxlen=400)  # ~20 s of (pitch, yaw, eye width, lid) for the drift check
     warm_pose = getattr(model, "warm_pose", None)
     from .track import bank_entries, pose_distance
@@ -146,6 +148,8 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
             posture.append((he[0], he[1], float(s.features[6]), lid_opening(s)))
         with lock:
             recent.append((s.t, base, h, s, held))
+            if len(recent) > 60 and recent[-61][3].frame is not None:
+                recent[-61][3].frame = None      # keep full HD frames for the last ~3 s only (RAM)
             a = aff.apply(base)
             c = a - base + corr.correction(a, h, s.t)
         out = latest.get("p", (np.nan, np.nan))
@@ -166,6 +170,8 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
             ok = bool(not held and not outside and latest.get("off_run", 0) < OFF_FRAMES and np.isfinite(out[0]))
             server.push({"t": round(s.t, 3), "x": round(float(out[0]), 1) if ok else None,
                          "y": round(float(out[1]), 1) if ok else None, "ok": ok, "cx": int(cur[0]), "cy": int(cur[1]),
+                         "rx": round(float(p_raw[0]), 1) if ok else None, "ry": round(float(p_raw[1]), 1) if ok else None,
+                         "ey": round(float(c[1]), 1), "gen": gen["n"],
                          "sd": round(sd_px, 1), "sdx": round(sdx_px, 1), "sdy": round(sdy_px, 1), "W": W, "H": H})
         if len(trace) < TRACE_MAX:
             trace.add(s, seg_i=0, local_t=0.0, seg=trace_seg, target_now=cur, target=cur, valid=False,
@@ -202,6 +208,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         with lock:
             aff.theta[2] += dx / W
             aff.theta[5] += dy / H
+            gen["n"] += 1
         print(f"   empujón ({dx:+.0f}, {dy:+.0f}) px · {aff.describe()}")
 
     def recheck_tick(now: float) -> None:
@@ -218,6 +225,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
                     for p, lab, t in res:
                         chk.add(p, lab, t)
                     aff.adopt(chk)
+                    gen["n"] += 1
                     corr.forget()
                     desc = aff.describe()
                 e = np.median([np.linalg.norm(p - lab) for p, lab, _ in res]) / screen.px_per_degree()
@@ -291,6 +299,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
                 refit = [(np.median(tuned.predict(P, X), 0), h, pos, t, conf) for X, P, h, pos, t, conf in hist]
                 with lock:
                     state["model"] = m
+                    gen["n"] += 1
                     aff.forget()
                     corr.forget()
                     for p, h, pos, t, conf in refit:
@@ -312,7 +321,8 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     print("punto rojo activo · aprende de clics y escritura" if learn else "punto rojo activo",
           "· Ctrl+Alt+G salir · Ctrl+Alt+flechas empujar · Ctrl+Alt+R recalibrar (5 botones)")
 
-    def absorb(kind: str, t_ev: float, pos, window: tuple | None = None, sd_px: tuple | None = None) -> None:
+    def absorb(kind: str, t_ev: float, pos, window: tuple | None = None, sd_px: tuple | None = None,
+               y_only: bool = False) -> None:
         """window given explicitly = already in sample time (web labels); else WINDOWS (eye time)."""
         if window is None:
             lo, hi, conf = WINDOWS[kind]
@@ -325,9 +335,12 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
             return
         p = np.median([r[1] for r in rows], axis=0)
         h = np.median([r[2] for r in rows], axis=0)
+        exo = kind in ("click", "caret")     # exogenous labels; gaze-derived ones (page snaps, reading) are not
         with lock:
+            if y_only:
+                pos = (float(aff.apply(p)[0]), pos[1])       # zero x innovation
             ok = aff.add(p, pos, t_ev, conf, sd_px)
-            if ok:
+            if ok and exo:
                 corr.add(aff.apply(p), h, pos, t_ev, conf)
                 if rows[0][3].patches is not None:
                     labels_hist.append((np.array([r[3].features for r in rows]), np.array([r[3].patches for r in rows]),
@@ -340,12 +353,12 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
             # the eye network learns only from EXOGENOUS labels (clicks, caret): page snaps are the
             # tracker's own decisions, and 4-10% of them name the wrong element in simulation — a
             # pseudo-label confirmation loop if they reached the network
-            if ok and can_tune and kind != "gaze" and r[3].patches is not None:
+            if ok and can_tune and exo and r[3].patches is not None:
                 tune["X"].append(r[3].features)
                 tune["Y"].append(np.asarray(pos, np.float32))
                 tune["P"].append(r[3].patches)
                 tune["n_new"] += 1
-        if kind != "gaze":
+        if exo:
             flash(pos, ok)
         else:
             stats["gaze_labels"] = stats.get("gaze_labels", 0) + int(ok)
@@ -380,9 +393,15 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         if server is not None and learn:
             while not server.labels.empty():
                 lab = server.labels.get_nowait()
-                if 0 <= lab["x"] < W and 0 <= lab["y"] < H and 0 < lab["t1"] - lab["t0"] <= 2.0:
-                    sd = (lab["sdx"], lab["sdy"]) if "sdx" in lab else None
-                    absorb("gaze", lab["t1"], (lab["x"], lab["y"]), (lab["t0"] - lab["t1"], 0.0, lab["conf"]), sd)
+                if 0 <= lab["y"] < H and 0 < lab["t1"] - lab["t0"] <= 3.0 and (lab["axis"] == "y" or 0 <= lab["x"] < W):
+                    if lab["axis"] == "y":       # reading: the line is known, the x is not
+                        sd = (1e4, max(lab.get("sdy", 30.0), 25.0))
+                        conf = min(lab["conf"], 0.3)
+                    else:
+                        sd = (lab["sdx"], lab["sdy"]) if "sdx" in lab else None
+                        conf = lab["conf"]
+                    absorb(lab["kind"], lab["t1"], (lab["x"], lab["y"]), (lab["t0"] - lab["t1"], 0.0, conf), sd,
+                           y_only=lab["axis"] == "y")
         maybe_tune(now)
         if wp["pose"] and now - drift["checked"] > 5 and len(posture) > 200:
             drift["checked"] = now
@@ -401,6 +420,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
                         aff.adopt(AffineKalman.seeded(W, H, m))
                         corr.forget()
                         labels_hist.clear()
+                        gen["n"] += 1
                     wp["pose"] = pose
                     why = []
                     print(f"   banco de posturas: uso el calentamiento {path.stem[5:]} (distancia {d:.2f})")
@@ -409,6 +429,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
                 msg = ("Postura nueva (" + ", ".join(why) + ").  Ctrl+Alt+R recalibra en 7 s · "
                        "`--rewarm` la añade al banco")
                 print("   ⚠", msg)
+                gen["n"] += 1
                 canvas.delete("toast")
                 canvas.create_rectangle(W / 2 - 430, 14, W / 2 + 430, 54, fill="#202328", outline="#e8a33d", width=2, tags="toast")
                 canvas.create_text(W / 2, 34, text=msg, fill="#f0f0f0", font=("Segoe UI", 12), tags="toast")

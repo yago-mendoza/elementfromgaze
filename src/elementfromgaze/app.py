@@ -96,8 +96,9 @@ class Recorder:
         c["blendshapes"].append(s.blendshapes)
         c["matrix"].append(s.matrix)
         c["head_euler"].append(head_euler(s.matrix))
-        c["brightness"].append(float(s.frame[::8, ::8].mean()))
-        self._frame_size = s.frame.shape[1::-1]
+        c["brightness"].append(float(s.frame[::8, ::8].mean()) if s.frame is not None else float("nan"))
+        if s.frame is not None:
+            self._frame_size = s.frame.shape[1::-1]
         c["t"].append(s.t)
         c["seg"].append(seg_i)
         c["local_t"].append(local_t)
@@ -108,7 +109,9 @@ class Recorder:
         c["bg"].append(seg.bg)
         c["blink"].append(s.blink)
         c["eyes_ok"].append(s.eyes_ok)
-        if self.save_frames:
+        if self.save_frames and s.frame is None:
+            self.jpegs.append(np.zeros(0, np.uint8))        # frame already dropped (old label rows)
+        elif self.save_frames:
             ok, buf = cv2.imencode(".jpg", s.frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
             self.jpegs.append(buf.ravel() if ok else np.zeros(0, np.uint8))
 
@@ -146,7 +149,7 @@ class Recorder:
             "px_per_degree": screen.px_per_degree(), "perf": perf,
             "n_samples": len(self), "n_valid": int(arr["valid"].sum()),
             "auto": {
-                "brightness_mean": float(arr["brightness"].mean()),
+                "brightness_mean": float(np.nanmean(arr["brightness"])),
                 "eye_width_median": float(np.median(eye_w)),          # distance proxy: bigger = closer
                 "pitch_p5_p95": np.percentile(he[:, 0], [5, 95]).round(1).tolist(),
                 "yaw_p5_p95": np.percentile(he[:, 1], [5, 95]).round(1).tolist(),
