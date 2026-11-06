@@ -6,6 +6,8 @@
   GET /efg.js   the browser side: window.efg.elementFromGaze(), gaze events, debug overlay
   GET /demo     a test page with buttons, a pie menu and text
   POST /log     the demo's test results -> data/web_log.jsonl
+  POST /label   {t0, t1, x, y, conf}: the page is confident you looked at (x, y) between t0 and t1
+                (engine clock, screen px) -> a weak implicit label, like a click
 
 Only binds 127.0.0.1. Standard library only: no extra dependency.
 """
@@ -26,6 +28,7 @@ class GazeServer:
     def __init__(self, port: int = PORT, log_path: Path | None = None):
         self.clients: list[queue.Queue] = []
         self.log_path = log_path
+        self.labels: queue.Queue = queue.Queue()      # gaze labels posted by pages (attractor snaps)
         self.lock = threading.Lock()
         srv = self
 
@@ -45,15 +48,27 @@ class GazeServer:
                 self._head(204, "text/plain")
 
             def do_POST(self):
-                if self.path.split("?")[0] != "/log" or srv.log_path is None:
-                    self._head(404, "text/plain")
-                    return
+                path = self.path.split("?")[0]
                 n = min(int(self.headers.get("Content-Length") or 0), 1_000_000)
                 body = self.rfile.read(n)
                 try:
                     rec = json.loads(body)
                 except ValueError:
                     self._head(400, "text/plain")
+                    return
+                if path == "/label":
+                    try:
+                        lab = {k: float(rec[k]) for k in ("t0", "t1", "x", "y", "conf")}
+                    except (KeyError, TypeError, ValueError):
+                        self._head(400, "text/plain")
+                        return
+                    lab["conf"] = min(max(lab["conf"], 0.05), 0.5)      # a page can never outweigh a click
+                    lab["label"] = str(rec.get("label", ""))[:40]
+                    srv.labels.put(lab)
+                    self._head(204, "text/plain")
+                    return
+                if path != "/log" or srv.log_path is None:
+                    self._head(404, "text/plain")
                     return
                 with srv.lock, open(srv.log_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(rec, ensure_ascii=False) + "\n")

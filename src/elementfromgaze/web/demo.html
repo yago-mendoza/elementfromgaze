@@ -33,7 +33,8 @@
   <h1>elementfromgaze</h1>
   <span class="st" id="st">conectando…</span>
   <button class="m" id="go">Empezar prueba (20 objetivos)</button>
-  <span class="st">Alt+G: punto y recuadro</span>
+  <label class="st"><input type="checkbox" id="mag" checked> imán (data-gaze)</label>
+  <span class="st">Alt+G: depuración</span>
 </header>
 <main>
   <section>
@@ -57,7 +58,7 @@
     <div id="res">—</div>
   </section>
 </main>
-<script src="/efg.js" data-debug></script>
+<script src="/efg.js" data-show></script>
 <script>
   // pie menu: 6 slices, JS-bound (no button tags): found through cursor:pointer
   const pie = document.getElementById("pie"), names = ["Inicio", "Correo", "Fotos", "Mapa", "Música", "Notas"];
@@ -74,6 +75,10 @@
     t.textContent = n; pie.appendChild(t);
   });
 
+  // attractors: every button and pie slice gets data-gaze (the checkbox removes it, to compare)
+  const mag = document.getElementById("mag");
+  const setMag = () => document.querySelectorAll("main button, svg path").forEach((e) => mag.checked ? e.setAttribute("data-gaze", "") : e.removeAttribute("data-gaze"));
+  mag.onchange = setMag; setMag();
   const st = document.getElementById("st"), log = document.getElementById("log");
   setInterval(() => {
     const m = efg.mapping, g = efg.elementFromGaze();
@@ -100,11 +105,11 @@
     const by = {};
     for (const r of rows) { (by[r.kind] ||= []).push(r.ok); }
     const nm = { l: "botón grande", m: "botón medio", s: "botón pequeño", "menú": "porción del menú" };
-    res.textContent = `aciertos ${rows.filter((r) => r.ok).length}/20\n` +
+    res.textContent = `aciertos ${rows.filter((r) => r.ok).length}/20 · imán ${mag.checked ? "sí" : "no"}\n` +
       Object.entries(by).map(([k, v]) => `${(nm[k] || k).padEnd(17)} ${v.filter(Boolean).length}/${v.length}`).join("\n");
     // send the result to the local server (data/web_log.jsonl) so it can be analysed
     const lab = (el) => el ? (el.getAttribute("aria-label") || el.textContent).trim() : null;
-    fetch(efg.origin + "/log", { method: "POST", body: JSON.stringify({ kind: "demo_test", when: new Date().toISOString(),
+    fetch(efg.origin + "/log", { method: "POST", body: JSON.stringify({ kind: "demo_test", when: new Date().toISOString(), magnet: mag.checked,
       trials: rows.map((r) => ({ target: lab(r.t), kind: r.kind, ok: r.ok, got: lab(r.got) })), mapping: efg.mapping,
       viewport: [innerWidth, innerHeight, devicePixelRatio] }) }).catch(() => {});
   };

@@ -37,6 +37,8 @@ RECHECK_POINTS = [(0.5, 0.5), (0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9)]
 RECHECK_S, RECHECK_SETTLE_S = 1.4, 0.5
 LABEL_DELAY_S = 0.12
 WINDOWS = {"click": (-0.35, 0.05, 1.0), "caret": (-0.25, 0.10, 0.6)}  # from, to, confidence
+# "gaze": labels posted by a web page when its attractor posterior is unambiguous (see web/efg.js);
+# window and confidence come with each label
 KEY_MIN_GAP_S = 0.35
 OFF_MARGIN_PX = 90      # prediction this far outside the screen = not looking at it (edges data:
 OFF_FRAMES = 3           # ~95% of look-aways caught, <1% false alarms)
@@ -58,6 +60,7 @@ def _combo(key: str) -> bool:
 
 
 SD_DEG = 0.9             # per-fixation error after warm-up + check (targets, 2026-11-06): sent to web pages
+SD_X_DEG, SD_Y_DEG = 0.7, 1.0   # same test, per axis: vertical is the hard one
 
 
 def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = False, serve: bool = False,
@@ -76,7 +79,8 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         from .web import GazeServer
         server = GazeServer(log_path=USER_MODEL.parent / "web_log.jsonl")
         print(f"servidor de mirada en {server.url} · página de prueba: {server.url}/demo")
-    sd_px = SD_DEG * screen.px_per_degree()
+    ppd = screen.px_per_degree()
+    sd_px, sdx_px, sdy_px = SD_DEG * ppd, SD_X_DEG * ppd, SD_Y_DEG * ppd
 
     aff = AffineKalman.seeded(W, H, model)   # global deformation (fast, few labels); starts from the warm-up check
     corr = ResidualCorrector()       # local residual field on top (needs many labels)
@@ -127,7 +131,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
             ok = bool(not held and not outside and latest.get("off_run", 0) < OFF_FRAMES and np.isfinite(out[0]))
             server.push({"t": round(s.t, 3), "x": round(float(out[0]), 1) if ok else None,
                          "y": round(float(out[1]), 1) if ok else None, "ok": ok, "cx": int(cur[0]), "cy": int(cur[1]),
-                         "sd": round(sd_px, 1), "W": W, "H": H})
+                         "sd": round(sd_px, 1), "sdx": round(sdx_px, 1), "sdy": round(sdy_px, 1), "W": W, "H": H})
         if len(trace) < TRACE_MAX:
             trace.add(s, seg_i=0, local_t=0.0, seg=trace_seg, target_now=cur, target=cur, valid=False,
                       extra={"base": base, "corr": c, "out": out, "blink": is_blink, "held": held, "outside": outside})
@@ -256,8 +260,8 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     print("punto rojo activo · aprende de clics y escritura" if learn else "punto rojo activo",
           "· Ctrl+Alt+G salir · Ctrl+Alt+flechas empujar · Ctrl+Alt+R recalibrar (5 botones)")
 
-    def absorb(kind: str, t_ev: float, pos) -> None:
-        lo, hi, conf = WINDOWS[kind]
+    def absorb(kind: str, t_ev: float, pos, window: tuple | None = None) -> None:
+        lo, hi, conf = window or WINDOWS[kind]
         with lock:
             rows = [r for r in recent if t_ev + lo <= r[0] <= t_ev + hi and not r[4]]
         if len(rows) < 3:
@@ -278,7 +282,10 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
                 tune["Y"].append(np.asarray(pos, np.float32))
                 tune["P"].append(r[3].patches)
                 tune["n_new"] += 1
-        flash(pos, ok)
+        if kind != "gaze":
+            flash(pos, ok)
+        else:
+            stats["gaze_labels"] = stats.get("gaze_labels", 0) + int(ok)
 
     def tick() -> None:
         if _hotkey_down():
@@ -306,6 +313,11 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
                         continue
                     last_key_label[0] = ev.t
                     absorb("caret", ev.t, pos)
+        if server is not None and learn:
+            while not server.labels.empty():
+                lab = server.labels.get_nowait()
+                if 0 <= lab["x"] < W and 0 <= lab["y"] < H and 0 < lab["t1"] - lab["t0"] <= 2.0:
+                    absorb("gaze", lab["t1"], (lab["x"], lab["y"]), (lab["t0"] - lab["t1"], 0.0, lab["conf"]))
         maybe_tune(now)
         p = latest.get("p")
         looking_away = now - latest.get("off_t", -1e9) < 0.25
@@ -325,7 +337,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
             with lock:
                 desc = aff.describe()
             print(f"   {worker.stats()} · etiquetas ✓{aff.accepted} ✗{aff.rejected} · "
-                  f"teclas sin caret {stats['keys_no_caret']} · {desc}"
+                  f"teclas sin caret {stats['keys_no_caret']} · por mirada {stats.get('gaze_labels', 0)} · {desc}"
                   + (f" · red ajustada {tune['fits']} veces" if can_tune else ""))
         root.after(16, tick)
 
