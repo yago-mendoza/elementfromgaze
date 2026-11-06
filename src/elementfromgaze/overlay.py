@@ -333,7 +333,10 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         stats["labels"] += 1
         for r in rows:
             rec.add(r[3], seg_i=idx, local_t=1.0, seg=seg, target_now=pos, target=pos, valid=ok)
-            if ok and can_tune and r[3].patches is not None:
+            # the eye network learns only from EXOGENOUS labels (clicks, caret): page snaps are the
+            # tracker's own decisions, and 4-10% of them name the wrong element in simulation — a
+            # pseudo-label confirmation loop if they reached the network
+            if ok and can_tune and kind != "gaze" and r[3].patches is not None:
                 tune["X"].append(r[3].features)
                 tune["Y"].append(np.asarray(pos, np.float32))
                 tune["P"].append(r[3].patches)
