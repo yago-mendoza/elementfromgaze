@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>elementfromgaze demo</title>
+<style>
+  :root { --bg: #16181b; --panel: #202328; --ink: #e8e8e8; --dim: #8b9098; --acc: #e8a33d; --gaze: #4fc3ff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 "Segoe UI", system-ui, sans-serif; }
+  header { display: flex; gap: 16px; align-items: center; padding: 14px 24px; border-bottom: 1px solid #2c3036; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  header .st { color: var(--dim); font: 13px Consolas, monospace; }
+  main { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 28px; padding: 28px; }
+  section { background: var(--panel); border-radius: 10px; padding: 18px; }
+  h2 { font-size: 14px; margin: 0 0 12px; color: var(--dim); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+  .row { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 18px; }
+  button { background: #2e333a; color: var(--ink); border: 1px solid #3c424a; border-radius: 8px; font: inherit; cursor: pointer; }
+  button.l { padding: 22px 34px; font-size: 18px; } button.m { padding: 12px 22px; } button.s { padding: 5px 10px; font-size: 13px; }
+  [data-gazed] { background: #24445a !important; border-color: var(--gaze) !important; }
+  button.lit { background: var(--acc) !important; color: #1b1b1b; border-color: #ffd27a; }
+  svg path { cursor: pointer; fill: #2e333a; stroke: var(--bg); stroke-width: 3; }
+  svg path[data-gazed] { fill: #24445a; } svg path.lit { fill: var(--acc); }
+  svg text { fill: var(--ink); font-size: 13px; pointer-events: none; text-anchor: middle; }
+  p { color: #c9ccd1; }
+  #log { font: 12px/1.6 Consolas, monospace; color: var(--dim); max-height: 300px; overflow: auto; white-space: pre; }
+  #res { font: 14px Consolas, monospace; white-space: pre; margin-top: 10px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>elementfromgaze</h1>
+  <span class="st" id="st">conectando…</span>
+  <button class="m" id="go">Empezar prueba (20 objetivos)</button>
+  <span class="st">Alt+G: punto y recuadro</span>
+</header>
+<main>
+  <section>
+    <h2>Botones</h2>
+    <div class="row"><button class="l">Abrir</button><button class="l">Guardar</button></div>
+    <div class="row"><button class="m">Copiar</button><button class="m">Pegar</button><button class="m">Buscar</button></div>
+    <div class="row"><button class="s">Ver</button><button class="s">Editar</button><button class="s">Ayuda</button><button class="s">Salir</button></div>
+    <h2>Lo que has mirado</h2>
+    <div id="log"></div>
+  </section>
+  <section>
+    <h2>Menú circular</h2>
+    <svg id="pie" viewBox="-160 -160 320 320" width="100%" style="max-width:420px"></svg>
+  </section>
+  <section>
+    <h2>Texto</h2>
+    <p>Los ojos se mueven a saltos, varias veces por segundo, y entre salto y salto se quedan quietos un
+      cuarto de segundo. <a href="#">Este enlace</a> está en mitad de una línea, y <a href="#">este otro</a> también.</p>
+    <p>Al leer, la mirada avanza de izquierda a derecha y vuelve al principio de la línea siguiente.</p>
+    <h2>Resultado de la prueba</h2>
+    <div id="res">—</div>
+  </section>
+</main>
+<script src="/efg.js" data-debug></script>
+<script>
+  // pie menu: 6 slices, JS-bound (no button tags): found through cursor:pointer
+  const pie = document.getElementById("pie"), names = ["Inicio", "Correo", "Fotos", "Mapa", "Música", "Notas"];
+  names.forEach((n, i) => {
+    const a0 = (i / 6) * 2 * Math.PI - Math.PI / 2, a1 = ((i + 1) / 6) * 2 * Math.PI - Math.PI / 2, R = 150, r = 50;
+    const P = (a, rr) => `${(rr * Math.cos(a)).toFixed(1)} ${(rr * Math.sin(a)).toFixed(1)}`;
+    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    p.setAttribute("d", `M ${P(a0, r)} L ${P(a0, R)} A ${R} ${R} 0 0 1 ${P(a1, R)} L ${P(a1, r)} A ${r} ${r} 0 0 0 ${P(a0, r)} Z`);
+    p.setAttribute("aria-label", n);
+    p.addEventListener("click", () => {});
+    pie.appendChild(p);
+    const t = document.createElementNS("http://www.w3.org/2000/svg", "text"), am = (a0 + a1) / 2;
+    t.setAttribute("x", (100 * Math.cos(am)).toFixed(1)); t.setAttribute("y", (100 * Math.sin(am) + 5).toFixed(1));
+    t.textContent = n; pie.appendChild(t);
+  });
+
+  const st = document.getElementById("st"), log = document.getElementById("log");
+  setInterval(() => {
+    const m = efg.mapping, g = efg.elementFromGaze();
+    st.textContent = (m.fitted ? "ventana localizada" : "mueve el ratón y déjalo quieto un momento dentro de la página") +
+      (g ? ` · miras: ${(g.element.getAttribute("aria-label") || g.element.textContent).trim()} (${(100 * g.p).toFixed(0)}%)` : "");
+    log.textContent = efg.history.slice(-14).reverse().map((h) => `${((h.end - h.start) / 1000).toFixed(2).padStart(5)} s  ${h.label}`).join("\n");
+  }, 150);
+
+  // test: one target lights up; you look at it; 1.4 s later we read what efg decided
+  const targets = () => [...document.querySelectorAll("main button, svg path")];
+  document.getElementById("go").onclick = async () => {
+    const T = targets(), res = document.getElementById("res"), rows = [];
+    res.textContent = "mira cada objetivo naranja…";
+    await new Promise((r) => setTimeout(r, 1200));
+    for (let i = 0; i < 20; i++) {
+      let t; do { t = T[Math.floor(Math.random() * T.length)]; } while (rows.length && rows[rows.length - 1].t === t);
+      t.classList.add("lit");
+      await new Promise((r) => setTimeout(r, 1400));
+      const g = efg.elementFromGaze();
+      rows.push({ t, ok: !!g && g.element === t, kind: t.tagName === "path" ? "menú" : t.className });
+      t.classList.remove("lit");
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    const by = {};
+    for (const r of rows) { (by[r.kind] ||= []).push(r.ok); }
+    const nm = { l: "botón grande", m: "botón medio", s: "botón pequeño", "menú": "porción del menú" };
+    res.textContent = `aciertos ${rows.filter((r) => r.ok).length}/20\n` +
+      Object.entries(by).map(([k, v]) => `${(nm[k] || k).padEnd(17)} ${v.filter(Boolean).length}/${v.length}`).join("\n");
+  };
+</script>
+</body>
+</html>

@@ -559,7 +559,8 @@ def evaluate(n: int = 12, tag: str = "normal", note: str = "") -> None:
         print("guardada:", stage.rec.save(W, H, f"eval-{tag}", note, stage.worker.stats()))
 
 
-def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = False) -> None:
+def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = False, serve: bool = False,
+        show: bool = True) -> None:
     from .overlay import dot as _dot
 
-    _dot(radius, learn, warm, rewarm)
+    _dot(radius, learn, warm, rewarm, serve, show)

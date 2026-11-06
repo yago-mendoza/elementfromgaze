@@ -47,7 +47,11 @@ def _hotkey_down() -> bool:
     return all(k(v) & 0x8000 for v in VK.values())
 
 
-def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = False) -> None:
+SD_DEG = 0.9             # per-fixation error after warm-up + check (targets, 2026-11-06): sent to web pages
+
+
+def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = False, serve: bool = False,
+        show: bool = True) -> None:
     if not USER_MODEL.exists():
         raise SystemExit("no hay modelo todavía: corre `efg calibrate` primero")
     model = GazeModel.load()
@@ -57,6 +61,12 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     state = {"model": model}
     screen.make_dpi_aware()
     W, H = screen.screen_size_px()
+    server = None
+    if serve:
+        from .web import GazeServer
+        server = GazeServer()
+        print(f"servidor de mirada en {server.url} · página de prueba: {server.url}/demo")
+    sd_px = SD_DEG * screen.px_per_degree()
 
     aff = AffineKalman.seeded(W, H, model)   # global deformation (fast, few labels); starts from the warm-up check
     corr = ResidualCorrector()       # local residual field on top (needs many labels)
@@ -100,8 +110,13 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
             calm, still = fixf(x, y, s.t), fixf_typing(x, y)      # both see every frame: no jump on switch
             out = still if s.t - typing["last_key"] < TYPING_HOLD_S else calm
             latest["p"], latest["t"] = out, s.t
+        cur = cursor_position()
+        if server is not None:
+            ok = bool(not held and not outside and latest.get("off_run", 0) < OFF_FRAMES and np.isfinite(out[0]))
+            server.push({"t": round(s.t, 3), "x": round(float(out[0]), 1) if ok else None,
+                         "y": round(float(out[1]), 1) if ok else None, "ok": ok, "cx": int(cur[0]), "cy": int(cur[1]),
+                         "sd": round(sd_px, 1), "W": W, "H": H})
         if len(trace) < TRACE_MAX:
-            cur = cursor_position()
             trace.add(s, seg_i=0, local_t=0.0, seg=trace_seg, target_now=cur, target=cur, valid=False,
                       extra={"base": base, "corr": c, "out": out, "blink": is_blink, "held": held, "outside": outside})
 
@@ -226,7 +241,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         maybe_tune(now)
         p = latest.get("p")
         looking_away = now - latest.get("off_t", -1e9) < 0.25
-        if p is not None and now - latest["t"] < 0.6 and not looking_away:
+        if show and p is not None and now - latest["t"] < 0.6 and not looking_away:
             x, y = p
             canvas.coords(dot_id, x - radius, y - radius, x + radius, y + radius)
             canvas.itemconfigure(dot_id, state="normal")

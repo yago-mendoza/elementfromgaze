@@ -80,6 +80,8 @@ def main() -> None:
     dt.add_argument("--no-learn", action="store_true", help="do not learn from clicks/typing")
     dt.add_argument("--no-warmup", action="store_true", help="skip the ~45 s posture warm-up")
     dt.add_argument("--rewarm", action="store_true", help="redo the warm-up even if one is <30 min old")
+    dt.add_argument("--serve", action="store_true", help="stream the gaze to web pages (http://127.0.0.1:8770, demo at /demo)")
+    dt.add_argument("--no-dot", action="store_true", help="don't draw the red dot (e.g. with --serve)")
     a = ap.parse_args()
     import os
     if a.hd:
@@ -109,7 +111,7 @@ def main() -> None:
     from . import app
 
     {"calibrate": lambda: app.calibrate(a.tag, a.note), "train": lambda: app.train(force=True),
-     "eval": lambda: app.evaluate(a.n, a.tag, a.note), "dot": lambda: app.dot(learn=not a.no_learn, warm=not a.no_warmup, rewarm=a.rewarm),
+     "eval": lambda: app.evaluate(a.n, a.tag, a.note), "dot": lambda: app.dot(learn=not a.no_learn, warm=not a.no_warmup, rewarm=a.rewarm, serve=a.serve, show=not a.no_dot),
      "motion": lambda: app.motion(a.mode, note=a.note), "edges": lambda: app.edges(a.note),
      "follow": lambda: __import__("elementfromgaze.follow", fromlist=["follow"]).follow(a.note)}[a.cmd]()
 

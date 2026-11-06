@@ -1,0 +1,96 @@
+"""Local gaze server for web pages: `efg dot --serve`.
+
+  GET /gaze     Server-Sent Events, one JSON message per camera frame:
+                {"t", "x", "y", "ok", "cx", "cy", "sd", "W", "H"}  (physical screen pixels;
+                cx/cy = OS cursor, which the page uses to learn its own screen -> viewport mapping)
+  GET /efg.js   the browser side: window.efg.elementFromGaze(), gaze events, debug overlay
+  GET /demo     a test page with buttons, a pie menu and text
+
+Only binds 127.0.0.1. Standard library only: no extra dependency.
+"""
+
+from __future__ import annotations
+
+import json
+import queue
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+PORT = 8770
+STATIC = Path(__file__).with_name("web")
+
+
+class GazeServer:
+    def __init__(self, port: int = PORT):
+        self.clients: list[queue.Queue] = []
+        self.lock = threading.Lock()
+        srv = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _head(self, code, ctype):
+                self.send_response(code)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Private-Network", "true")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+
+            def do_OPTIONS(self):
+                self._head(204, "text/plain")
+
+            def do_GET(self):
+                path = self.path.split("?")[0]
+                if path == "/gaze":
+                    self._head(200, "text/event-stream")
+                    q: queue.Queue = queue.Queue(maxsize=8)
+                    with srv.lock:
+                        srv.clients.append(q)
+                    try:
+                        while True:
+                            try:
+                                msg = q.get(timeout=5)
+                            except queue.Empty:
+                                msg = ": ping"           # keeps proxies / the browser from timing out
+                            self.wfile.write((msg + "\n\n").encode())
+                            self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+                        pass
+                    finally:
+                        with srv.lock:
+                            srv.clients.remove(q)
+                    return
+                files = {"/efg.js": ("efg.js", "application/javascript; charset=utf-8"),
+                         "/demo": ("demo.html", "text/html; charset=utf-8"), "/": ("demo.html", "text/html; charset=utf-8")}
+                if path in files:
+                    name, ctype = files[path]
+                    self._head(200, ctype)
+                    self.wfile.write((STATIC / name).read_bytes())
+                    return
+                self._head(404, "text/plain")
+
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        self.httpd.daemon_threads = True
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        self.url = f"http://127.0.0.1:{port}"
+
+    def push(self, msg: dict) -> None:
+        data = "data: " + json.dumps(msg, separators=(",", ":"))
+        with self.lock:
+            clients = list(self.clients)
+        for q in clients:
+            try:
+                q.put_nowait(data)
+            except queue.Full:          # slow client: drop its oldest message, keep it live
+                try:
+                    q.get_nowait()
+                    q.put_nowait(data)
+                except (queue.Empty, queue.Full):
+                    pass
+
+    def close(self) -> None:
+        self.httpd.shutdown()
