@@ -109,6 +109,9 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     recent: "deque[tuple]" = deque(maxlen=60)   # (t, base, h, sample, blink)
     posture: "deque[tuple]" = deque(maxlen=400)  # ~20 s of (pitch, yaw, eye width, lid) for the drift check
     warm_pose = getattr(model, "warm_pose", None)
+    from .track import bank_entries, pose_distance
+    bank = bank_entries() if warm else []
+    wp = {"pose": warm_pose, "bank_checked": False}
     from .track import pose_drift      # here, not at the top: track imports overlay
     labels_hist: "deque[tuple]" = deque(maxlen=40)   # (feature rows, patch rows, h, pos, t, conf) to re-fit after a fine-tune
     latest: dict = {}
@@ -381,15 +384,30 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
                     sd = (lab["sdx"], lab["sdy"]) if "sdx" in lab else None
                     absorb("gaze", lab["t1"], (lab["x"], lab["y"]), (lab["t0"] - lab["t1"], 0.0, lab["conf"]), sd)
         maybe_tune(now)
-        if warm_pose and now - drift["checked"] > 5 and len(posture) > 200:
+        if wp["pose"] and now - drift["checked"] > 5 and len(posture) > 200:
             drift["checked"] = now
             a = np.array(posture)
             cur = {"pitch": float(np.median(a[:, 0])), "yaw": float(np.median(a[:, 1])),
                    "eye_w": float(np.median(a[:, 2])), "lid": float(np.median(a[:, 3]))}
-            why = pose_drift(cur, warm_pose)
+            why = pose_drift(cur, wp["pose"])
+            if bank and (why or not wp["bank_checked"]):
+                # posture bank: the warm-up fitted closest to how you sit now
+                wp["bank_checked"] = True
+                d, (pose, path) = min(((pose_distance(cur, b[0]), b) for b in bank), key=lambda z: z[0])
+                if not pose_drift(cur, pose) and pose is not wp["pose"]:
+                    m = GazeModel.load(path)
+                    with lock:
+                        state["model"] = m
+                        aff.adopt(AffineKalman.seeded(W, H, m))
+                        corr.forget()
+                        labels_hist.clear()
+                    wp["pose"] = pose
+                    why = []
+                    print(f"   banco de posturas: uso el calentamiento {path.stem[5:]} (distancia {d:.2f})")
             if why and now - drift["warned"] > 90:
                 drift["warned"] = now
-                msg = "Postura distinta a la del calentamiento: " + ", ".join(why) + ".  Ctrl+Alt+R recalibra en 7 s"
+                msg = ("Postura nueva (" + ", ".join(why) + ").  Ctrl+Alt+R recalibra en 7 s · "
+                       "`--rewarm` la añade al banco")
                 print("   ⚠", msg)
                 canvas.delete("toast")
                 canvas.create_rectangle(W / 2 - 430, 14, W / 2 + 430, 54, fill="#202328", outline="#e8a33d", width=2, tags="toast")

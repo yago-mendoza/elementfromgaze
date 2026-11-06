@@ -284,6 +284,41 @@ def pose_drift(now: dict, ref: dict) -> list[str]:
 WARM_MAX_AGE_S = 30 * 60
 
 
+def _bank_dir():
+    """Posture bank: every warm-up is kept with the posture it was fitted to; `dot` switches to
+    the one that matches how you sit now, so a posture you have warmed up once never needs it again
+    (until `efg train` makes a new base model, which makes the bank stale)."""
+    from .tracker import USER_MODEL
+    return USER_MODEL.with_name(USER_MODEL.stem + "_bank")
+
+
+def pose_distance(a: dict, b: dict) -> float:
+    """Same units as pose_drift's thresholds: 1.0 ~ 'just different enough to matter'."""
+    return float(np.sqrt(((a["pitch"] - b["pitch"]) / 5) ** 2 + ((a["yaw"] - b["yaw"]) / 6) ** 2
+                         + (np.log(a["eye_w"] / b["eye_w"]) / 0.07) ** 2 + ((a["lid"] / b["lid"] - 1) / 0.15) ** 2))
+
+
+def bank_entries() -> list[tuple[dict, "Path"]]:
+    """(warm_pose, path) of every banked warm-up newer than the base model."""
+    import pickle
+
+    from .tracker import USER_MODEL
+    out = []
+    d = _bank_dir()
+    if not d.exists() or not USER_MODEL.exists():
+        return out
+    for p in sorted(d.glob("warm_*.pkl")):
+        if p.stat().st_mtime <= USER_MODEL.stat().st_mtime:
+            continue
+        try:
+            pose = getattr(pickle.loads(p.read_bytes()), "warm_pose", None)
+        except Exception:
+            continue
+        if pose:
+            out.append((pose, p))
+    return out
+
+
 def _warm_path():
     from .tracker import USER_MODEL
     return USER_MODEL.with_name(USER_MODEL.stem + "_warm.pkl")
@@ -294,6 +329,12 @@ def warm_model(model: GazeModel) -> GazeModel:
     from .tracker import USER_MODEL
 
     p = _warm_path()
+    bank = bank_entries()
+    if bank and not (p.exists() and time.time() - p.stat().st_mtime < WARM_MAX_AGE_S):
+        # an older warm-up: start from the latest; `dot` switches to the bank entry that matches
+        # your posture after ~10 s, or tells you it is a new posture
+        print(f"banco de posturas: {len(bank)} calentamientos; elijo el tuyo en unos segundos")
+        return GazeModel.load(bank[-1][1])
     if (p.exists() and time.time() - p.stat().st_mtime < WARM_MAX_AGE_S
             and p.stat().st_mtime > USER_MODEL.stat().st_mtime):      # newer than the base model
         m = GazeModel.load(p)
@@ -345,4 +386,7 @@ def warmup(model: GazeModel, rounds: int = 8) -> GazeModel:   # 8 > 4: 1.45° ->
     print(f"listo en {time.monotonic() - t0:.0f}s")
     stage.rec.save(W, H, "warmup", "calentamiento de `efg dot`", stage.worker.stats())
     tuned.save(_warm_path())
+    bank = _bank_dir()
+    bank.mkdir(parents=True, exist_ok=True)
+    tuned.save(bank / f"warm_{time.strftime('%Y%m%d-%H%M%S')}.pkl")
     return tuned
