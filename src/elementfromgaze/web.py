@@ -108,6 +108,7 @@ class GazeServer:
                             srv.clients.remove(q)
                     return
                 files = {"/efg.js": ("efg.js", "application/javascript; charset=utf-8"),
+                         "/read": ("read.html", "text/html; charset=utf-8"),
                          "/demo": ("demo.html", "text/html; charset=utf-8"), "/": ("demo.html", "text/html; charset=utf-8")}
                 if path in files:
                     name, ctype = files[path]

@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>elementfromgaze · prueba de lectura</title>
+<style>
+  :root { --bg: #16181b; --panel: #202328; --ink: #e8e8e8; --dim: #8b9098; --acc: #e8a33d; --gaze: #4fc3ff; --ok: #34c759; --bad: #ff6b5e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 "Segoe UI", system-ui, sans-serif; }
+  main { display: grid; grid-template-columns: minmax(0, 42em) minmax(260px, 1fr); gap: 36px; padding: 26px 32px; align-items: start; }
+  #txt { font: 17px/1.6 Georgia, "Times New Roman", serif; color: #dcdfe3; }
+  #txt p { margin: 0 0 1em; }
+  #txt.off { opacity: .25; }
+  aside { background: var(--panel); border-radius: 10px; padding: 16px 18px; font-size: 14px; position: sticky; top: 16px; }
+  aside h1 { font-size: 16px; margin: 0 0 8px; font-weight: 600; }
+  aside ol { padding-left: 18px; margin: 8px 0 12px; color: #c9ccd1; }
+  .st { color: var(--dim); font: 12px/1.5 Consolas, monospace; white-space: pre-wrap; }
+  button { background: #2e333a; color: var(--ink); border: 1px solid #3c424a; border-radius: 8px; font: inherit; cursor: pointer; padding: 9px 18px; }
+  button.go { background: var(--acc); color: #1b1b1b; border-color: #ffd27a; }
+  button:disabled { opacity: .4; cursor: default; }
+  #done { margin-top: 6px; }
+  table { border-collapse: collapse; width: 100%; font: 12px/1.45 Consolas, monospace; margin-top: 10px; }
+  td, th { padding: 2px 6px; text-align: right; border-bottom: 1px solid #2c3036; }
+  th { color: var(--dim); font-weight: normal; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  #sum { font: 13px/1.6 Consolas, monospace; white-space: pre-wrap; margin-top: 10px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } aside { position: static; } }
+</style>
+</head>
+<body>
+<main>
+  <article id="txt" class="off">
+    <p>Leer parece un acto continuo, pero los ojos no se deslizan por la línea: avanzan a saltos. Cada salto
+      recorre siete u ocho letras y cada parada dura un cuarto de segundo, más o menos. En esas paradas, llamadas
+      fijaciones, es cuando de verdad vemos; durante el salto la visión se apaga casi por completo y el cerebro
+      rellena el hueco sin que lo notemos.</p>
+    <p>Al llegar al final de una línea, la mirada da un salto largo hacia la izquierda y baja a la siguiente. Ese
+      barrido de vuelta es el movimiento más reconocible de la lectura. Rara vez acierta a la primera: suele
+      quedarse corto, unas cinco letras dentro de la línea, y una pequeña corrección lo lleva hasta el principio.</p>
+    <p>También retrocedemos. Una de cada diez fijaciones, más o menos, vuelve sobre una palabra ya leída, casi
+      siempre en la misma línea.</p>
+    <p>Un sistema que sigue la mirada con una cámara web se equivoca en torno a un grado, y ese error cambia
+      despacio cuando nos movemos en la silla o se nos cansan los párpados. Un grado equivale a dos o tres líneas
+      de este texto, así que la posición absoluta no basta para saber qué línea lees. La forma del recorrido, en
+      cambio, es muy precisa: los saltos entre fijaciones se miden con mucho menos error que su posición.</p>
+    <p>Por eso el programa no pregunta solo dónde miras, sino qué recorrido es compatible con leer. Los párrafos
+      cortos, los huecos entre ellos y las líneas finales que no llegan al margen funcionan como señales: cuando la
+      lectura pasa por una de ellas, la línea queda identificada y el desvío vertical se puede medir con pocos
+      píxeles de error.</p>
+    <p>Si has llegado hasta aquí leyendo cada línea una vez, pulsa el botón de abajo.</p>
+    <button id="done" disabled>Terminé</button>
+  </article>
+  <aside>
+    <h1>Prueba de lectura</h1>
+    <ol>
+      <li>Mueve el ratón dentro de la página y déjalo quieto un momento (así se localiza la ventana).</li>
+      <li>Pulsa <b>Empezar</b>.</li>
+      <li>Lee el texto de arriba abajo, cada línea una vez, a tu ritmo, sin saltarte nada ni volver atrás a propósito.</li>
+      <li>Al acabar pulsa <b>Terminé</b> (o Intro).</li>
+    </ol>
+    <button id="go" class="go">Empezar</button>
+    <label class="st"><input type="checkbox" id="hl" checked> mostrar línea y palabra</label>
+    <div class="st" id="st">conectando…</div>
+    <div id="sum"></div>
+    <div id="tab"></div>
+  </aside>
+</main>
+<script src="/efg.js" data-show></script>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const txt = $("txt"), go = $("go"), done = $("done"), st = $("st"), hl = $("hl");
+  const paras = [...txt.querySelectorAll("p")];
+  let rec = null;     // {fix: [], labels: [], t0}
+  hl.onchange = () => efg.show(hl.checked);
+  setInterval(() => {
+    if (!window.efg) return;
+    const m = efg.mapping, r = efg.reading();
+    st.textContent = (m.fitted ? "ventana localizada" : "mueve el ratón dentro de la página y déjalo quieto") +
+      (r ? `\nlectura ${(r.p * 100).toFixed(0)} %, línea ${r.line.index + 1} (${(r.line.p * 100).toFixed(0)} %)` +
+        `\ndesvío vertical ${r.offset.dy >= 0 ? "+" : ""}${r.offset.dy.toFixed(0)} ± ${r.offset.sd.toFixed(0)} px · ganancia ${r.offset.gain.toFixed(2)}` +
+        `\netiquetas de lectura ${r.labels}${r.paused ? " (en pausa)" : ""}${r.raw ? "" : " · sin rx/ry"}` : "\nlectura: —") +
+      `\n${efg.stats.readMs.toFixed(2)} ms por fijación` + (rec ? `\ngrabando: ${rec.fix.length} fijaciones` : "");
+  }, 250);
+
+  // truth lines of the test text, reading order, as [{el, index}]
+  const truthLines = () => paras.flatMap((p) => efg.textLines(p).map((L) => ({ el: p, index: L.index, cy: L.cy, left: L.left, right: L.right })));
+  addEventListener("efgfixation", (e) => {
+    if (!rec) return;
+    const d = e.detail, T = truthLines();
+    let naive = -1, bd = 1e9;
+    T.forEach((L, i) => { const dd = Math.abs(L.cy - d.y); if (dd < bd) { bd = dd; naive = i; } });
+    const fi = d.line ? T.findIndex((L) => L.el === d.line.element && L.index === d.line.index) : -1;
+    const r = txt.getBoundingClientRect();
+    rec.fix.push({ t0: d.t0, t1: d.t1, x: d.x, y: d.y, ye: d.y - (d.ey || 0), n: d.n, pRead: d.pRead, filt: fi, p: d.line ? d.line.p : 0,
+      shown: d.shown, naive, inside: d.x > r.left - 60 && d.x < r.right + 60 && d.y > r.top - 60 && d.y < r.bottom - 30 });
+  });
+  addEventListener("efglabel", (e) => {
+    if (!rec) return;
+    const d = e.detail, T = truthLines();
+    rec.labels.push({ t: d.t, line: T.findIndex((L) => L.el === d.element && L.index === d.index), p: d.p });
+  });
+
+  function start() {
+    rec = { fix: [], labels: [], when: new Date().toISOString() };
+    txt.classList.remove("off"); go.disabled = true; done.disabled = false;
+    $("sum").textContent = ""; $("tab").innerHTML = "";
+    scrollTo(0, 0);
+  }
+  // ground truth by construction: the text was read top to bottom, each line once. Monotone DP over
+  // (fixation, line) with ONE unknown vertical offset (searched): line k explains y ~ cy_k + o; moving to
+  // the next line should be a leftward saccade, staying on a line should not be a long leftward one.
+  function truthDP(F, T) {
+    const N = T.length, n = F.length, W = T.map((L) => L.right - L.left).sort((x, y) => x - y)[N >> 1] || 600;
+    const dx = F.map((f, i) => (i ? f.x - F[i - 1].x : 0));
+    let best = { cost: Infinity };
+    for (let o = -150; o <= 150; o += 3) {
+      const D = new Float64Array(n * N).fill(Infinity), B = new Uint8Array(n * N);
+      const c = (i, k) => Math.min(0.5 * ((F[i].ye - T[k].cy - o) / 10) ** 2, 8);   // ye: engine correction changes undone
+      D[0] = c(0, 0);
+      for (let i = 1; i < n; i++) for (let k = 0; k < N; k++) {
+        const stay = D[(i - 1) * N + k] + (dx[i] < -0.5 * W ? 3 : 0);
+        const move = k ? D[(i - 1) * N + k - 1] + (dx[i] < -0.15 * W ? 0 : dx[i] < 0 ? 2 : 5) : Infinity;
+        D[i * N + k] = Math.min(stay, move) + c(i, k); B[i * N + k] = move < stay ? 1 : 0;
+      }
+      const tot = D[(n - 1) * N + N - 1];
+      if (tot < best.cost) best = { cost: tot, o, B: B.slice() };
+    }
+    const lab = new Array(n);
+    for (let i = n - 1, k = N - 1; i >= 0; i--) { lab[i] = k; if (i && best.B[i * N + k]) k--; }
+    const rms = Math.sqrt(F.reduce((s, f, i) => s + (f.ye - T[lab[i]].cy - best.o) ** 2, 0) / Math.max(n, 1));
+    return { lab, o: best.o, rms };
+  }
+  function finish() {
+    if (!rec) return null;
+    const R = rec; rec = null;
+    txt.classList.add("off"); go.disabled = false; done.disabled = true;
+    const T = truthLines(), N = T.length;
+    let F = R.fix;
+    const a = F.findIndex((f) => f.inside), b = F.length - 1 - [...F].reverse().findIndex((f) => f.inside);
+    F = a >= 0 ? F.slice(a, b + 1) : [];
+    const W = T.map((L) => L.right - L.left).sort((x, y) => x - y)[N >> 1] || 600;
+    const clear = F.filter((f, i) => i && f.x - F[i - 1].x < -0.35 * W).length;
+    const dp = F.length ? truthDP(F, T) : { lab: [], o: 0, rms: 0 };
+    F.forEach((f, i) => { f.truth = dp.lab[i]; });
+    const per = T.map((L, i) => ({ line: i + 1, fix: 0, filt: 0, shown: 0, shownOk: 0, naive: 0, labels: 0, labelsOk: 0 }));
+    for (const f of F) {
+      const P = per[f.truth];
+      if (!P) continue;
+      P.fix++; if (f.filt === f.truth) P.filt++; if (f.naive === f.truth) P.naive++;
+      if (f.shown) { P.shown++; if (f.filt === f.truth) P.shownOk++; }
+    }
+    for (const l of R.labels) {   // a label is about the run that ended at time t: its truth is that run's line
+      const f = F.find((q) => Math.abs(q.t1 - l.t) < 1e-6) || F.reduce((best, q) => (Math.abs(q.t1 - l.t) < Math.abs(best.t1 - l.t) ? q : best), F[0] || { truth: -1 });
+      const P = per[l.line];
+      if (P) { P.labels++; if (f && f.truth === l.line) P.labelsOk++; }
+      l.truth = f ? f.truth : -1;
+    }
+    const sum = (key) => per.reduce((s, P) => s + P[key], 0), nf = sum("fix") || 1;
+    const rd = efg.reading();
+    const summary = {
+      lines: N, fixations: F.length, sweepsClear: clear, sweepsExpected: N - 1, truthOffset: dp.o, truthRms: dp.rms,
+      consistent: dp.rms < 15 && Math.abs(clear - (N - 1)) <= 3,
+      filterAcc: sum("filt") / nf, naiveAcc: sum("naive") / nf, shownShare: sum("shown") / nf,
+      shownAcc: sum("shown") ? sum("shownOk") / sum("shown") : null,
+      labels: R.labels.length, labelsCorrect: R.labels.filter((l) => l.truth === l.line).length,
+      offset: rd ? rd.offset : null, raw: rd ? rd.raw : null, msPerFix: efg.stats.readMs,
+    };
+    const css = getComputedStyle(paras[0]);
+    const out = { kind: "read_test", when: R.when, layout: { font: css.fontSize, lineHeight: css.lineHeight, width: paras[0].getBoundingClientRect().width },
+      summary, perLine: per, labels: R.labels,
+      fixations: F.map((f) => [+f.t0.toFixed(3), +f.t1.toFixed(3), Math.round(f.x), Math.round(f.y), +f.pRead.toFixed(3), f.filt, +f.p.toFixed(3), f.shown ? 1 : 0, f.truth, f.naive]),
+      mapping: efg.mapping, options: efg.readingOptions };
+    fetch(efg.origin + "/log", { method: "POST", body: JSON.stringify(out) }).catch(() => {});
+    const pc = (v) => (v === null ? "—" : (100 * v).toFixed(0) + " %");
+    $("sum").innerHTML = `${N} líneas · ${F.length} fijaciones · barridos claros ${clear}/${N - 1}` +
+      (summary.consistent ? "" : ' <span class="bad">(lectura no lineal: verdad aproximada)</span>') +
+      `\nlínea correcta: filtro ${pc(summary.filterAcc)} · más cercana ${pc(summary.naiveAcc)}` +
+      `\nresaltado ${pc(summary.shownShare)} del tiempo, acierta ${pc(summary.shownAcc)}` +
+      `\netiquetas ${summary.labels}, en la línea correcta ${summary.labelsCorrect}` +
+      `\n${summary.msPerFix.toFixed(2)} ms por fijación · guardado en el registro (read_test)`;
+    $("tab").innerHTML = "<table><tr><th>línea</th><th>fij.</th><th>filtro</th><th>cercana</th><th>resalt.</th><th>etiq.</th></tr>" +
+      per.map((P) => `<tr><td>${P.line}</td><td>${P.fix}</td><td class="${P.fix && P.filt / P.fix >= 0.8 ? "ok" : "bad"}">${P.fix ? P.filt + "/" + P.fix : "—"}</td>` +
+        `<td>${P.fix ? P.naive + "/" + P.fix : "—"}</td><td>${P.shown ? P.shownOk + "/" + P.shown : "—"}</td>` +
+        `<td class="${P.labels && P.labelsOk < P.labels ? "bad" : ""}">${P.labels ? P.labelsOk + "/" + P.labels : ""}</td></tr>`).join("") + "</table>";
+    return out;
+  }
+  go.onclick = start;
+  done.onclick = finish;
+  addEventListener("keydown", (e) => { if (e.key === "Enter" && rec) { e.preventDefault(); finish(); } });
+  window.readTest = { start, finish };
+})();
+</script>
+</body>
+</html>
