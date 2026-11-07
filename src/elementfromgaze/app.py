@@ -485,7 +485,18 @@ def train(appearance: bool = True, force: bool = False) -> GazeModel | None:
     err = np.linalg.norm(model.predict(d["X"]) - d["Y"], axis=1)
     print(f"modelo base entrenado con {len(d['X'])} muestras de {len(d['names'])} sesiones · "
           f"error de ajuste (optimista) {np.median(err) / ppd:.1f}°")
-    if appearance:
+    # A user who started from the strangers' base keeps it: a network trained on their own few
+    # sessions alone would be far worse (the base + warm-up: ~2°). Retraining that mixes strangers
+    # in is the next step; until then their eye network only moves through warm-up fine-tunes.
+    from .generic import uses_strangers
+    old = GazeModel.load() if USER_MODEL.exists() else None
+    if appearance and old is not None and uses_strangers(getattr(old, "appearance", None)):
+        model.appearance = old.appearance
+        for k in ("generic", "start_aff"):
+            if hasattr(old, k):
+                setattr(model, k, getattr(old, k))
+        print("red de ojos: se mantiene la de base (entrenada con otras personas) + tus calentamientos")
+    elif appearance:
         has = d["has_P"]
         if has.sum() >= 1500:
             print(f"entrenando la red de ojos con {int(has.sum())} muestras (unos minutos)…")
