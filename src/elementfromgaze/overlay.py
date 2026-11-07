@@ -90,9 +90,8 @@ SD_X_DEG, SD_Y_DEG = 0.7, 1.0   # same test, per axis: vertical is the hard one
 
 def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = False, serve: bool = False,
         show: bool = True, control: bool = False, click: bool = False) -> None:
-    if not USER_MODEL.exists():
-        raise SystemExit("no hay modelo todavía: corre `efg calibrate` primero")
-    model = GazeModel.load()
+    from .tracker import load_user_model
+    model = load_user_model(warm)
     if warm:   # posture is the biggest source of error: adapt to the one you're in now
         from .track import warm_model, warmup
         model = warmup(model) if rewarm else warm_model(model)
@@ -379,6 +378,11 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         try:
             d = load_sessions(with_patches=True)
         except SystemExit:
+            from .generic import uses_strangers
+            if uses_strangers(getattr(state["model"], "appearance", None)):   # new user: replay strangers only
+                from .appearance import PATCH_H, PATCH_W
+                tune["prior"] = (np.zeros((0, 24), np.float32), np.zeros((0, 2), np.float32),
+                                 np.zeros((0, 2, PATCH_H, PATCH_W), np.uint8))
             return
         rows = np.where(d["has_P"])[0]
         idx = rows[np.linspace(0, len(rows) - 1, min(3000, len(rows))).astype(int)]

@@ -162,7 +162,8 @@ def summarize(rec, W, H) -> dict | None:
 
 
 def track(note: str = "", warm: bool = True, rewarm: bool = False) -> None:
-    model = GazeModel.load()
+    from .tracker import load_user_model
+    model = load_user_model(warm)
     if warm:   # measure what `efg dot` shows, i.e. after the posture warm-up
         model = warmup(model) if rewarm else warm_model(model)
     screen.make_dpi_aware()
@@ -409,15 +410,46 @@ def warm_model(model: GazeModel) -> GazeModel:
     return warmup(model)
 
 
-def warmup(model: GazeModel, rounds: int = 8) -> GazeModel:   # 8 > 4: 1.45° -> 1.25° on 3 tracks
-    """Fine-tune the eye network's top layers on a fresh ~45 s pursuit (replaying the calibration
-    sessions 1:1). Measured on a far, head-down posture never seen in calibration: 4.3° -> 1.1-1.2°
-    on curves and static points not used for the fit."""
+def adapt(model: GazeModel, P, X, Y, rounds: int = 8, screen_px=None) -> GazeModel:
+    """The warm-up's fine-tune: top layers on the warm-up, replaying the user's own sessions 1:1.
+    A NEW user (model.generic, from generic.py) first gets the screen geometry fitted, 16 rounds
+    instead of 8 (1.86° -> 1.62°), and replays strangers (every fine-tune of theirs does)."""
     import copy
 
     from .appearance import finetune_copy
     from .tracker import load_sessions
 
+    app = model.appearance
+    new = getattr(model, "generic", False)
+    if new:
+        from .generic import fit_geometry
+        app = fit_geometry(app, X, Y)
+        rounds = max(rounds, 16)
+    try:
+        pr = load_sessions(with_patches=True)
+        rows = np.where(pr["has_P"])[0]
+    except SystemExit:                     # no sessions of their own yet
+        pr, rows = None, np.zeros(0, int)
+    rng = np.random.default_rng(0)
+    for k in range(rounds):
+        rep = rng.choice(rows, min(len(X), len(rows)), replace=False)
+        if len(rep):
+            app = finetune_copy(app, np.concatenate([P, pr["P"][rep]]), np.vstack([X, pr["X"][rep]]),
+                                np.vstack([Y, pr["Y"][rep]]), steps=40, seed=k)
+        else:
+            app = finetune_copy(app, P, X, Y, steps=40, seed=k)
+    tuned = copy.copy(model)
+    tuned.appearance = app
+    if new:
+        tuned.generic = False              # geometry fitted: from now on it is this user's model
+        tuned.fit(X, Y, screen_px or getattr(model, "screen", None))   # feature fallback regressor
+    return tuned
+
+
+def warmup(model: GazeModel, rounds: int = 8) -> GazeModel:   # 8 > 4: 1.45° -> 1.25° on 3 tracks
+    """Fine-tune the eye network's top layers on a fresh ~45 s pursuit (replaying the calibration
+    sessions 1:1). Measured on a far, head-down posture never seen in calibration: 4.3° -> 1.1-1.2°
+    on curves and static points not used for the fit."""
     if getattr(model, "appearance", None) is None:
         print("sin red de ojos: no hay calentamiento")
         return model
@@ -426,6 +458,8 @@ def warmup(model: GazeModel, rounds: int = 8) -> GazeModel:   # 8 > 4: 1.45° ->
     stage = WarmupStage(W, H)
     stage.run()
     if stage.aborted or len(stage.rec) < 200:
+        if getattr(model, "generic", False):
+            raise SystemExit("la primera vez el calentamiento es imprescindible: ajusta la red a tus ojos y tu pantalla")
         print("calentamiento saltado")
         return model
     c = stage.rec.cols
@@ -433,17 +467,8 @@ def warmup(model: GazeModel, rounds: int = 8) -> GazeModel:   # 8 > 4: 1.45° ->
     X, Y = np.array(c["features"])[ok], np.array(c["targets"], np.float32)[ok]
     P = np.array(c["patches"])[ok]
     print(f"calentamiento: {ok.sum()} muestras válidas · ajustando la red a tu postura…")
-    pr = load_sessions(with_patches=True)
-    rows = np.where(pr["has_P"])[0]
-    rng = np.random.default_rng(0)
-    app = model.appearance
     t0 = time.monotonic()
-    for k in range(rounds):
-        rep = rng.choice(rows, min(len(X), len(rows)), replace=False)
-        app = finetune_copy(app, np.concatenate([P, pr["P"][rep]]), np.vstack([X, pr["X"][rep]]),
-                            np.vstack([Y, pr["Y"][rep]]), steps=40, seed=k)
-    tuned = copy.copy(model)
-    tuned.appearance = app
+    tuned = adapt(model, P, X, Y, rounds, (W, H))
     tuned.start_aff = check_correction(tuned, stage.rec, W, H)
     tuned.warm_pose = pose_summary(np.array(c["head_euler"])[ok], np.array(c["features"])[ok])
     print(f"listo en {time.monotonic() - t0:.0f}s")

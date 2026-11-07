@@ -88,6 +88,8 @@ def main() -> None:
     ct.add_argument("--serve", action="store_true")
     ct.add_argument("--no-warmup", action="store_true")
     ct.add_argument("--rewarm", action="store_true")
+    gn = sub.add_parser("generic", help="developer: build the base for new users from MPIIFaceGaze (prepare <Data dir> | build)")
+    gn.add_argument("args", nargs="*")
     sub.add_parser("gesture", help="~20 s: record normal blinks and long blinks to set the click threshold")
     dt = sub.add_parser("dot")
     dt.add_argument("--no-learn", action="store_true", help="do not learn from clicks/typing")
@@ -116,6 +118,10 @@ def main() -> None:
     if a.cmd == "control":
         from . import app as _app
         _app.dot(warm=not a.no_warmup, rewarm=a.rewarm, serve=a.serve, show=a.dot, control=True, click=a.click)
+        return
+    if a.cmd == "generic":
+        from .generic import main as generic_main
+        generic_main(a.args)
         return
     if a.cmd == "gesture":
         from .gesture import gesture

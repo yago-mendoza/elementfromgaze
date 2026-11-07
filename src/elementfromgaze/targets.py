@@ -275,7 +275,8 @@ def format_report(rep) -> str:
 def targets(note: str = "", warm: bool = True, rewarm: bool = False, show: bool = False) -> None:
     from .track import warm_model, warmup
 
-    model = GazeModel.load()
+    from .tracker import load_user_model
+    model = load_user_model(warm)
     if warm:
         model = warmup(model) if rewarm else warm_model(model)
     screen.make_dpi_aware()

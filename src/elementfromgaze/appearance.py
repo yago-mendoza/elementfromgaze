@@ -340,10 +340,25 @@ def finetune_copy(model: AppearanceModel, P, X: np.ndarray, Y: np.ndarray,
     Pn = [_norm(p) for p in _mods(P)]
     R, t = (torch.from_numpy(a) for a in _pose(X))
     Yt = torch.from_numpy(Y.astype(np.float32))
+    # A user who started from the strangers' base (generic.py) has little or no history of their own:
+    # replay strangers too, supervised by their true gaze direction (no screen needed). Measured on
+    # a new person's warm-up: 2.19° without, 1.86° with (8 rounds).
+    strangers = None
+    if getattr(model, "generic_replay", False):
+        from . import generic
+        strangers = generic.replay()
+        if strangers is not None:
+            sR, sD = torch.from_numpy(_pose(strangers[1])[0]), torch.from_numpy(strangers[2])
     for _ in range(steps):
-        ix = rng.integers(0, len(X), min(batch, len(X)))
-        xs = [torch.from_numpy(_crop(p[ix], True, rng)) for p in Pn]
-        loss = F.smooth_l1_loss(net(xs, R[ix], t[ix]) / 100, Yt[ix] / 100) + net.prior() / max(len(X), 1000)
+        loss = net.prior() / max(len(X), 1000)
+        if len(X):
+            ix = rng.integers(0, len(X), min(batch, len(X)))
+            xs = [torch.from_numpy(_crop(p[ix], True, rng)) for p in Pn]
+            loss = loss + F.smooth_l1_loss(net(xs, R[ix], t[ix]) / 100, Yt[ix] / 100)
+        if strangers is not None:
+            from .generic import angle_loss
+            js = rng.integers(0, len(sD), 32)
+            loss = loss + angle_loss(net, torch.from_numpy(_crop(_norm(strangers[0][js]), True, rng)), sR[js], sD[js])
         opt.zero_grad()
         loss.backward()
         opt.step()

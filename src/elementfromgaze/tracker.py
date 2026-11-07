@@ -200,6 +200,22 @@ class GazeModel:
         return pickle.loads(path.read_bytes())
 
 
+def load_user_model(warm: bool = True) -> GazeModel:
+    """The user's model; for someone new, the strangers' base (generic.py), which needs a warm-up."""
+    if USER_MODEL.exists():
+        m = GazeModel.load()
+    else:
+        from .generic import new_user_model
+        m = new_user_model()
+        if m is None:
+            raise SystemExit("no hay modelo todavía: corre `efg calibrate` primero")
+        m.save()
+        print("primera vez: empiezo con una red entrenada con otras personas; el calentamiento la ajusta a ti")
+    if getattr(m, "generic", False) and not warm:
+        raise SystemExit("la primera vez hace falta el calentamiento (quita --no-warmup)")
+    return m
+
+
 TRAIN_PHASES = ("fix", "vor", "pursuit", "eval", "click", "caret", "follow")
 
 

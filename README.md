@@ -4,7 +4,7 @@ Webcam eye tracking whose end goal is one call: **`elementFromGaze()`** — the 
 
 Laptop webcam only: no infrared hardware, no GPU, nothing leaves the machine.
 
-> **Status: experimental, Windows, single user.** The eye network is trained on one person (the author). A base that works for anyone, with a short calibration for each new person, is the next milestone (see Roadmap).
+> **Status: experimental, Windows.** Built and tuned on one person (the author). New users start from a base trained on other people (`efg generic`, below): with the ~80 s warm-up it reaches ~1.5–2° on the first day (measured with the author playing a new user; his personal model: ~1.3°). Not yet tested on a second real person.
 
 ## What it does today
 
@@ -89,6 +89,6 @@ Everything runs locally. Sessions, models and logs live in `data/`, which is git
 ## Roadmap
 
 1. ~~Core~~ · ~~head-pose robustness~~ · ~~appearance model~~ · ~~implicit recalibration, UI-aware decoding, reading prior~~ · ~~desktop control~~
-2. **Works for anyone**: a base trained on many people (public gaze datasets + volunteers, with and without glasses), measured on people it never saw, plus a 2-minute first-run calibration.
+2. **Works for anyone** — first version done: `efg generic prepare <MPIIFaceGaze/Data>` + `efg generic build` train a base on 10 strangers (MPIIFaceGaze, CC BY-NC-SA 4.0, so these weights are too); someone without a model starts from it, the warm-up fits their screen and replays strangers. Next: a base trained on many people (public gaze datasets + volunteers, with and without glasses), measured on people it never saw, plus a 2-minute first-run calibration.
 3. Automatic periodic retraining on your own use.
 4. Publish: GitHub + pip; a live in-browser demo (MediaPipe web + the eye network in ONNX).
