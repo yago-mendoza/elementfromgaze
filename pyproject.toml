@@ -4,9 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "elementfromgaze"
-version = "0.0.1"
-description = "Webcam gaze tracking that answers: which UI element am I looking at?"
+version = "0.1.0"
+description = "Point at things with your eyes, using only the laptop webcam: the pointer snaps to any app's buttons, a long blink clicks."
 readme = "README.md"
+license = "MIT"
+authors = [{ name = "Yago Mendoza" }]
+keywords = ["eye tracking", "gaze estimation", "webcam", "mediapipe", "accessibility"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Image Recognition",
+  "Topic :: Scientific/Engineering :: Human Machine Interfaces",
+]
 requires-python = ">=3.11,<3.14"
 dependencies = [
   "mediapipe>=0.10.30",
@@ -26,6 +36,10 @@ dependencies = [
   "winrt-Windows.Foundation; sys_platform == 'win32'",
   "winrt-Windows.Foundation.Collections; sys_platform == 'win32'",
 ]
+
+[project.urls]
+Homepage = "https://infraphysics.net"
+Repository = "https://github.com/yago-mendoza/elementfromgaze"
 
 [project.scripts]
 efg = "elementfromgaze.__main__:main"

@@ -1,4 +1,4 @@
-"""`efg dot`: the red dot over the whole screen, learning from your clicks and typing as you go.
+"""`efg dot`: the gaze dot over the whole screen, learning from your clicks and typing as you go.
 
 Per frame:   eye network (or feature model) -> global deformation (Kalman) -> local field -> blink gate
              -> fixation filter
@@ -358,8 +358,8 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
             fx, fy = RECAL_POINTS[min(int((t - recal_T) // RECAL_POINT_S), len(RECAL_POINTS) - 1)]
             x, y = fx * W, fy * H
             r = 15 + 14 * max(0.0, 1 - ((t - recal_T) % RECAL_POINT_S) / RECAL_SETTLE_S)   # shrinking ring
-        canvas.create_oval(x - r, y - r, x + r, y + r, outline="#e8a33d", width=4, tags="recheck")
-        canvas.create_oval(x - 3, y - 3, x + 3, y + 3, fill="#e8a33d", outline="", tags="recheck")
+        canvas.create_oval(x - r, y - r, x + r, y + r, outline=look.ACCENT, width=4, tags="recheck")
+        canvas.create_oval(x - 3, y - 3, x + 3, y + 3, fill=look.ACCENT, outline="", tags="recheck")
     root.update_idletasks()
     screen.make_click_through(ctypes.windll.user32.GetParent(root.winfo_id()))
     from .toast import Toaster
@@ -367,7 +367,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
 
     def flash(pos, ok: bool) -> None:
         x, y = pos
-        i = canvas.create_oval(x - 16, y - 16, x + 16, y + 16, outline="#34c759" if ok else "#8e8e93", width=2)
+        i = canvas.create_oval(x - 16, y - 16, x + 16, y + 16, outline=look.GOOD if ok else look.FAINT, width=2)
         root.after(350, lambda: canvas.delete(i))
 
     # --- live fine-tuning of the eye network from accepted labels -------------
@@ -456,7 +456,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     tick_t = [time.monotonic()]
     drift = {"checked": time.monotonic(), "warned": -1e9}
     last_print = [time.monotonic()]
-    print("punto rojo activo · aprende de clics y escritura" if learn else "punto rojo activo",
+    print("punto activo · aprende de clics y escritura" if learn else "punto activo",
           "· Ctrl+Alt+G salir · Ctrl+Alt+flechas empujar · Ctrl+Alt+R recalibrar (5 botones)")
 
     def absorb(kind: str, t_ev: float, pos, window: tuple | None = None, sd_px: tuple | None = None,

@@ -171,7 +171,7 @@ class Stage:
     """A full-screen Tk window that plays Segments and records every sample against them."""
 
     title = "Calibración"
-    intro_text = ("Mira siempre el punto rojo; leerás instrucciones entre fases.\n"
+    intro_text = ("Mira siempre el punto naranja; leerás instrucciones entre fases.\n"
                   "ESPACIO para empezar · ESC para salir sin guardar")
 
     def __init__(self, segments: list[Segment]):

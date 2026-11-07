@@ -4,27 +4,64 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>elementfromgaze · prueba de lectura</title>
+<meta name="color-scheme" content="dark">
 <style>
-  :root { --bg: #16181b; --panel: #202328; --ink: #e8e8e8; --dim: #8b9098; --acc: #e8a33d; --gaze: #4fc3ff; --ok: #34c759; --bad: #ff6b5e; }
+  :root {
+    --bg: #0b0b0c; --panel: #0f0f11; --line: #1e1e21; --line-2: #2a2a2e; --line-hi: #4a4843;
+    --ink: #e8e4dc; --ink-2: #b4b0a8; --dim: #75726c; --faint: #4d4b47;
+    --acc: #c8643b; --acc-soft: rgba(200, 100, 59, .1);
+    --ok: #9ab894; --bad: #d9826d;
+    --sans: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    --mono: "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 "Segoe UI", system-ui, sans-serif; }
-  main { display: grid; grid-template-columns: minmax(0, 42em) minmax(260px, 1fr); gap: 36px; padding: 26px 32px; align-items: start; }
-  #txt { font: 17px/1.6 Georgia, "Times New Roman", serif; color: #dcdfe3; }
-  #txt p { margin: 0 0 1em; }
+  html { background: var(--bg); }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+  /* the text column is 48em of this 15px (720 px): at 17/1.6 the whole text fits a ~1420x680 window */
+  main { display: grid; grid-template-columns: minmax(0, 48em) minmax(260px, 360px); justify-content: center; gap: clamp(40px, 5vw, 88px);
+    padding: clamp(16px, calc(50vh - 340px), 96px) 32px 32px; align-items: start; }
+
+  /* the reading text: a serif, nothing around it; the button sits at the end of the last line */
+  #txt { font: 17px/1.6 Georgia, "Times New Roman", serif; color: #dad5cc; transition: opacity .3s;
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 24px; align-items: center; }
+  #txt p { margin: 0 0 1em; grid-column: 1 / -1; }
+  #txt p:last-of-type { grid-column: 1; margin: 0; }
   #txt.off { opacity: .25; }
-  aside { background: var(--panel); border-radius: 10px; padding: 16px 18px; font-size: 14px; position: sticky; top: 16px; }
-  aside h1 { font-size: 16px; margin: 0 0 8px; font-weight: 600; }
-  aside ol { padding-left: 18px; margin: 8px 0 12px; color: #c9ccd1; }
-  .st { color: var(--dim); font: 12px/1.5 Consolas, monospace; white-space: pre-wrap; }
-  button { background: #2e333a; color: var(--ink); border: 1px solid #3c424a; border-radius: 8px; font: inherit; cursor: pointer; padding: 9px 18px; }
-  button.go { background: var(--acc); color: #1b1b1b; border-color: #ffd27a; }
+
+  /* the side panel: steps, controls, live status, result; quiet and compact */
+  aside { position: sticky; top: 16px; font-size: 13.5px; color: var(--ink-2); }
+  aside h1 { margin: 0 0 4px; font-size: 15px; font-weight: 600; color: var(--ink); letter-spacing: .01em; padding-left: 12px; position: relative; }
+  aside h1::before { content: ""; position: absolute; left: 0; top: 3px; bottom: 3px; width: 2px; background: var(--acc); }
+  .sub { margin: 0 0 18px; padding-left: 12px; font-size: 12.5px; color: var(--dim); }
+  aside ol { list-style: none; counter-reset: s; margin: 0 0 20px; padding: 0; }
+  aside li { counter-increment: s; position: relative; padding-left: 26px; margin-bottom: 7px; line-height: 1.5; }
+  aside li::before { content: counter(s); position: absolute; left: 1px; top: 1px; font: 11px/1.7 var(--mono); color: var(--faint); }
+  aside li b { color: var(--ink); font-weight: 500; }
+  .act { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin-bottom: 18px; }
+  button { font: 500 13.5px/1 var(--sans); color: var(--ink); background: transparent; border: 1px solid var(--line-2); border-radius: 5px;
+    padding: 0 18px; height: 34px; cursor: pointer; transition: background .15s, border-color .15s, opacity .15s; }
+  button:hover:not(:disabled) { border-color: var(--line-hi); background: rgba(232, 228, 220, .04); }
+  button.go, #done:not(:disabled) { border-color: rgba(200, 100, 59, .6); }
+  button.go:hover:not(:disabled), #done:hover:not(:disabled) { border-color: var(--acc); background: var(--acc-soft); }
   button:disabled { opacity: .4; cursor: default; }
-  #done { margin-top: 6px; }
-  table { border-collapse: collapse; width: 100%; font: 12px/1.45 Consolas, monospace; margin-top: 10px; }
-  td, th { padding: 2px 6px; text-align: right; border-bottom: 1px solid #2c3036; }
-  th { color: var(--dim); font-weight: normal; }
+  label.st { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font: 12.5px/1.4 var(--sans); color: var(--dim); white-space: normal; }
+  label.st input { accent-color: var(--acc); width: 13px; height: 13px; margin: 0; }
+  .st { color: var(--dim); font: 11.5px/1.65 var(--mono); white-space: pre-wrap; }
+  #st { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+  #sum { font: 12px/1.65 var(--mono); color: var(--ink-2); white-space: pre-wrap; margin-top: 14px; }
+  #sum:empty { display: none; }
+  #sum .bad { font-family: var(--sans); font-size: 13px; line-height: 1.5; }
+  #tab { max-height: max(150px, calc(100vh - 660px)); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
+  table { border-collapse: collapse; width: 100%; font: 11.5px/1.5 var(--mono); margin-top: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  td, th { padding: 2px 6px; text-align: right; border-bottom: 1px solid var(--line); }
+  td:first-child, th:first-child { padding-left: 0; color: var(--dim); }
+  th { color: var(--dim); font-weight: normal; border-bottom-color: var(--line-2); padding-bottom: 5px; position: sticky; top: 0; background: var(--bg); }
   .ok { color: var(--ok); } .bad { color: var(--bad); }
-  #sum { font: 13px/1.6 Consolas, monospace; white-space: pre-wrap; margin-top: 10px; }
+
+  /* efg's own pointer, in this page's colours: the line being read gets a thin oxide underline */
+  html > div[data-efg][style*="border-bottom"] { border-bottom: 2px solid rgba(200, 100, 59, .85) !important; background: rgba(200, 100, 59, .07) !important; }
+  html > div[data-efg][style*="box-shadow"] { border: 1.5px solid rgba(232, 228, 220, .8) !important; background: rgba(232, 228, 220, .05) !important; box-shadow: none !important; }
+
   @media (max-width: 900px) { main { grid-template-columns: 1fr; } aside { position: static; } }
 </style>
 </head>
@@ -53,14 +90,17 @@
   </article>
   <aside>
     <h1>Prueba de lectura</h1>
+    <p class="sub">elementfromgaze</p>
     <ol>
       <li>Mueve el ratón dentro de la página y déjalo quieto un momento (así se localiza la ventana).</li>
       <li>Pulsa <b>Empezar</b>.</li>
       <li>Lee el texto de arriba abajo, cada línea una vez, a tu ritmo, sin saltarte nada ni volver atrás a propósito.</li>
       <li>Al acabar pulsa <b>Terminé</b> (o Intro).</li>
     </ol>
-    <button id="go" class="go">Empezar</button>
-    <label class="st"><input type="checkbox" id="hl" checked> mostrar línea y palabra</label>
+    <div class="act">
+      <button id="go" class="go">Empezar</button>
+      <label class="st"><input type="checkbox" id="hl" checked> mostrar línea y palabra</label>
+    </div>
     <div class="st" id="st">conectando…</div>
     <div id="sum"></div>
     <div id="tab"></div>
@@ -83,7 +123,7 @@
     st.textContent = (m.fitted ? "ventana localizada" : "mueve el ratón dentro de la página y déjalo quieto") +
       (r ? `\nlectura ${(r.p * 100).toFixed(0)} %, línea ${r.line.index + 1} (${(r.line.p * 100).toFixed(0)} %)` +
         `\ndesvío vertical ${r.offset.dy >= 0 ? "+" : ""}${r.offset.dy.toFixed(0)} ± ${r.offset.sd.toFixed(0)} px · ganancia ${r.offset.gain.toFixed(2)}` +
-        `\netiquetas de lectura ${r.labels}${r.paused ? " (en pausa)" : ""}${r.raw ? "" : " · sin rx/ry"}` : "\nlectura: —") +
+        `\netiquetas de lectura ${r.labels}${r.paused ? " (en pausa)" : ""}${r.raw ? "" : " · sin rx/ry"}` : "\nlectura: sin datos") +
       `\n${efg.stats.readMs.toFixed(2)} ms por fijación` + (rec ? `\ngrabando: ${rec.fix.length} fijaciones` : "");
   }, 250);
 
@@ -188,7 +228,7 @@
       viewport: [innerWidth, innerHeight, scrollX, scrollY, devicePixelRatio],
       mapping: efg.mapping, options: efg.readingOptions };
     fetch(efg.origin + "/log", { method: "POST", body: JSON.stringify(out) }).catch(() => {});
-    const pc = (v) => (v === null ? "—" : (100 * v).toFixed(0) + " %");
+    const pc = (v) => (v === null ? "n/d" : (100 * v).toFixed(0) + " %");
     $("sum").innerHTML = `${N} líneas · ${F.length} fijaciones · barridos claros ${clear}/${N - 1}` +
       (summary.consistent ? "" : ' <span class="bad">(lectura no lineal: verdad aproximada)</span>') +
       (scrolled ? ' <span class="bad">(la página se desplazó: prueba no válida)</span>' : "") +
@@ -197,8 +237,8 @@
       `\netiquetas ${summary.labels}, en la línea correcta ${summary.labelsCorrect}` +
       `\n${summary.msPerFix.toFixed(2)} ms por fijación · guardado en el registro (read_test)`;
     $("tab").innerHTML = "<table><tr><th>línea</th><th>fij.</th><th>filtro</th><th>cercana</th><th>resalt.</th><th>etiq.</th></tr>" +
-      per.map((P) => `<tr><td>${P.line}</td><td>${P.fix}</td><td class="${P.fix && P.filt / P.fix >= 0.8 ? "ok" : "bad"}">${P.fix ? P.filt + "/" + P.fix : "—"}</td>` +
-        `<td>${P.fix ? P.naive + "/" + P.fix : "—"}</td><td>${P.shown ? P.shownOk + "/" + P.shown : "—"}</td>` +
+      per.map((P) => `<tr><td>${P.line}</td><td>${P.fix}</td><td class="${P.fix && P.filt / P.fix >= 0.8 ? "ok" : "bad"}">${P.fix ? P.filt + "/" + P.fix : "·"}</td>` +
+        `<td>${P.fix ? P.naive + "/" + P.fix : "·"}</td><td>${P.shown ? P.shownOk + "/" + P.shown : "·"}</td>` +
         `<td class="${P.labels && P.labelsOk < P.labels ? "bad" : ""}">${P.labels ? P.labelsOk + "/" + P.labels : ""}</td></tr>`).join("") + "</table>";
     return out;
   }

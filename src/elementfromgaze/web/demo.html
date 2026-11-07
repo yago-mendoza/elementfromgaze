@@ -3,65 +3,167 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>elementfromgaze demo</title>
 <style>
-  :root { --bg: #16181b; --panel: #202328; --ink: #e8e8e8; --dim: #8b9098; --acc: #e8a33d; --gaze: #4fc3ff; }
+  :root {
+    --bg: #0b0b0c; --card: #111113; --card-hi: #18181b; --panel: #0f0f11;
+    --line: #1e1e21; --line-2: #2a2a2e; --line-hi: #4a4843;
+    --ink: #e8e4dc; --ink-2: #b4b0a8; --dim: #75726c; --faint: #4d4b47;
+    --acc: #c8643b; --acc-ink: #efc4ae; --acc-soft: rgba(200, 100, 59, .12);
+    --sans: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --mono: "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 "Segoe UI", system-ui, sans-serif; }
-  header { display: flex; gap: 16px; align-items: center; padding: 14px 24px; border-bottom: 1px solid #2c3036; }
-  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
-  header .st { color: var(--dim); font: 13px Consolas, monospace; }
-  main { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 28px; padding: 28px; }
-  section { background: var(--panel); border-radius: 10px; padding: 18px; }
-  h2 { font-size: 14px; margin: 0 0 12px; color: var(--dim); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
-  .row { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 18px; }
-  button { background: #2e333a; color: var(--ink); border: 1px solid #3c424a; border-radius: 8px; font: inherit; cursor: pointer; }
-  button.l { padding: 22px 34px; font-size: 18px; } button.m { padding: 12px 22px; } button.s { padding: 5px 10px; font-size: 13px; }
-  [data-gazed] { background: #24445a !important; border-color: var(--gaze) !important; }
-  button.lit { background: var(--acc) !important; color: #1b1b1b; border-color: #ffd27a; }
-  svg path { cursor: pointer; fill: #2e333a; stroke: var(--bg); stroke-width: 3; }
-  svg path[data-gazed] { fill: #24445a; } svg path.lit { fill: var(--acc); }
-  svg text { fill: var(--ink); font-size: 13px; pointer-events: none; text-anchor: middle; }
-  p { color: #c9ccd1; }
-  #log { font: 12px/1.6 Consolas, monospace; color: var(--dim); max-height: 300px; overflow: auto; white-space: pre; }
-  #res { font: 14px Consolas, monospace; white-space: pre; margin-top: 10px; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  html { background: var(--bg); }
+  body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1680px; margin: 0 auto; padding: 0 clamp(20px, 2.8vw, 48px); }
+
+  /* top bar: name, then the few controls, quiet */
+  header { flex: none; border-bottom: 1px solid var(--line); }
+  header .wrap { display: flex; align-items: center; gap: 28px; height: 60px; }
+  .brand { display: flex; align-items: baseline; gap: 10px; flex: none; }
+  .brand h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: .01em; padding-left: 12px; position: relative; }
+  .brand h1::before { content: ""; position: absolute; left: 0; top: 3px; bottom: 3px; width: 2px; background: var(--acc); }
+  .brand span { color: var(--dim); font-size: 13px; }
+  .ctl { flex: none; display: flex; align-items: center; gap: 24px; color: var(--dim); font-size: 13px; }
+  .ctl label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; color: var(--ink-2); }
+  .ctl input { accent-color: var(--acc); width: 14px; height: 14px; margin: 0; }
+  kbd { font: 11px/1 var(--mono); color: var(--ink-2); border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 4px; padding: 3px 5px; margin-right: 6px; }
+  #go { height: 34px; padding: 0 16px; font: 500 13px/1 var(--sans); color: var(--ink); background: transparent;
+    border: 1px solid rgba(200, 100, 59, .55); border-radius: 5px; cursor: pointer; transition: background .15s, border-color .15s; }
+  #go:hover { background: var(--acc-soft); border-color: var(--acc); }
+
+  /* one line on what to do, and the live status */
+  .lede { grid-column: 1 / -1; margin: 0 0 clamp(4px, 2.4vh, 30px); color: var(--ink-2); font-size: 14.5px; }
+  .lede b { color: var(--ink); font-weight: 500; }
+  #st { flex: 1 1 auto; min-width: 0; padding-left: 20px; margin-left: 6px; border-left: 1px solid var(--line-2); font: 12px/1.5 var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  main { flex: 1 0 auto; width: 100%; display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1.1fr) minmax(250px, .72fr); align-content: center;
+    column-gap: clamp(36px, 4vw, 72px); row-gap: 0; padding-top: clamp(22px, 3.5vh, 40px); padding-bottom: clamp(28px, 9vh, 110px); }
+  h2 { margin: 0 0 14px; font: 500 11px/1 var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+  section + section { margin-top: clamp(26px, 4.5vh, 52px); }
+
+  /* gaze targets: cards that light up as you look at them */
+  .grid { display: grid; gap: clamp(12px, 1.7vh, 20px); margin-bottom: clamp(12px, 1.7vh, 20px); }
+  .grid.l { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid.m { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .grid.s { display: flex; flex-wrap: wrap; gap: 14px 12px; margin-bottom: 0; }
+  .cell { position: relative; }
+  main button { position: relative; display: block; width: 100%; margin: 0; font-family: var(--sans); color: var(--ink-2); background: var(--card);
+    border: 1px solid var(--line-2); border-radius: 6px; cursor: pointer; text-align: left;
+    transition: background .18s, border-color .18s, color .18s; }
+  button.l { height: clamp(104px, 17vh, 184px); padding: 18px 22px 40px; font-size: 22px; font-weight: 500; letter-spacing: -.01em; }
+  button.m { height: clamp(66px, 10vh, 108px); padding: 12px 18px 30px; font-size: 16px; font-weight: 500; }
+  button.s { width: auto; height: 32px; padding: 0 14px; font-size: 13px; text-align: center; border-radius: 5px; }
+  main button::before { content: ""; position: absolute; left: -1px; top: 16px; bottom: 16px; width: 2px; background: var(--acc); opacity: 0; transition: opacity .18s; }
+  button.s::before { top: 8px; bottom: 8px; }
+  main button:hover { border-color: var(--line-hi); }
+  main button[data-gazed] { background: var(--card-hi); border-color: var(--line-hi); color: #fff; }
+  main button[data-gazed]::before { opacity: 1; }
+  /* the test target: an outline, not a fill */
+  main button.lit { border-color: var(--acc); box-shadow: inset 0 0 0 1px var(--acc); background: var(--acc-soft); color: var(--acc-ink); }
+  .ro { position: absolute; left: 23px; bottom: 14px; pointer-events: none; font: 11px/1 var(--mono); color: var(--faint); white-space: pre; transition: color .18s; }
+  .grid.m .ro { left: 19px; bottom: 12px; }
+  .grid.s .ro { position: static; display: block; margin-top: 7px; padding-left: 1px; font-size: 10.5px; }
+  .cell.hot .ro { color: var(--dim); }
+  .cell:has(> button[data-gazed]) .ro { color: var(--acc-ink); }
+  .cell:has(> button.lit) .ro { color: var(--acc); }
+
+  /* pie menu: JS-bound slices, no button tags */
+  .pie { display: flex; justify-content: center; }
+  #pie { width: 100%; max-width: min(560px, 60vh); margin: 0 auto; height: auto; display: block; overflow: visible; }
+  svg path { cursor: pointer; fill: var(--card); stroke: var(--bg); stroke-width: 4; transition: fill .18s; }
+  svg path:hover { fill: #151517; }
+  svg path[data-gazed] { fill: #1d1d20; }
+  svg path.lit { fill: rgba(200, 100, 59, .22); }
+  svg text { pointer-events: none; text-anchor: middle; }
+  svg text.n { fill: var(--ink-2); font: 500 12.5px var(--sans); }
+  svg text.v { fill: var(--faint); font: 9.5px var(--mono); }
+
+  /* text with inline links */
+  .prose p { margin: 0 0 .7em; font: 16.5px/1.62 var(--serif); color: #cfcac2; max-width: 40em; }
+  .prose a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--faint); text-decoration-thickness: 1px; text-underline-offset: 3px; border-radius: 2px; }
+  .prose a[data-gazed] { color: #fff; text-decoration-color: var(--acc); background: rgba(232, 228, 220, .06); }
+
+  /* the quiet side panel: history and test result */
+  aside { align-self: start; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 18px 18px 16px; }
+  aside h2 { margin-bottom: 10px; }
+  aside h2 + * { margin-bottom: 22px; }
+  #log { font: 11.5px/1.65 var(--mono); color: var(--dim); max-height: 15.5em; min-height: 6em; overflow: auto; white-space: pre; }
+  #log:empty::before { content: "nada todavía"; color: var(--faint); }
+  #res { font: 12px/1.65 var(--mono); color: var(--ink-2); white-space: pre; margin-bottom: 0 !important; }
+  aside .note { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.5; color: var(--dim); }
+
+  /* efg's own pointer, in this page's colours (the lens that morphs onto what you look at) */
+  html > div[data-efg][style*="box-shadow"] { border: 1.5px solid rgba(232, 228, 220, .85) !important; background: rgba(232, 228, 220, .05) !important; box-shadow: none !important; }
+  html > div[data-efg][style*="border-bottom"] { border-bottom: 2px solid rgba(200, 100, 59, .85) !important; background: rgba(200, 100, 59, .07) !important; }
+
+  @media (max-width: 1100px) { main { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); row-gap: 32px; } aside { grid-column: 1 / -1; } }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; } .ctl { gap: 14px; } .ctl .hint { display: none; } #st { display: none; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>elementfromgaze</h1>
-  <span class="st" id="st">conectando…</span>
-  <button class="m" id="go">Empezar prueba (20 objetivos)</button>
-  <label class="st"><input type="checkbox" id="mag" checked> imán (data-gaze)</label>
-  <span class="st">Alt+G: depuración</span>
+  <div class="wrap">
+    <div class="brand"><h1>elementfromgaze</h1><span>demo</span></div>
+    <span id="st">conectando…</span>
+    <div class="ctl">
+      <label><input type="checkbox" id="mag" checked> imán (data-gaze)</label>
+      <span class="hint"><kbd>Alt+G</kbd>depuración</span>
+      <button class="m" id="go">Empezar prueba (20 objetivos)</button>
+    </div>
+  </div>
 </header>
-<main>
-  <section>
-    <h2>Botones</h2>
-    <div class="row"><button class="l">Abrir</button><button class="l">Guardar</button></div>
-    <div class="row"><button class="m">Copiar</button><button class="m">Pegar</button><button class="m">Buscar</button></div>
-    <div class="row"><button class="s">Ver</button><button class="s">Editar</button><button class="s">Ayuda</button><button class="s">Salir</button></div>
+<main class="wrap">
+  <p class="lede">Mira un objetivo y quédate en él un momento: <b>se ilumina el que el filtro cree que miras</b>. En cada uno, p es la probabilidad que le da; el segundo número, cuánto llevas mirándolo.</p>
+  <div>
+    <section>
+      <h2>Botones</h2>
+      <div class="grid l">
+        <div class="cell"><button class="l">Abrir</button><span class="ro" data-efg data-gaze-read="off"></span></div>
+        <div class="cell"><button class="l">Guardar</button><span class="ro" data-efg data-gaze-read="off"></span></div>
+      </div>
+      <div class="grid m">
+        <div class="cell"><button class="m">Copiar</button><span class="ro" data-efg data-gaze-read="off"></span></div>
+        <div class="cell"><button class="m">Pegar</button><span class="ro" data-efg data-gaze-read="off"></span></div>
+        <div class="cell"><button class="m">Buscar</button><span class="ro" data-efg data-gaze-read="off"></span></div>
+      </div>
+      <div class="grid s">
+        <div class="cell"><button class="s">Ver</button><span class="ro" data-efg data-gaze-read="off"></span></div>
+        <div class="cell"><button class="s">Editar</button><span class="ro" data-efg data-gaze-read="off"></span></div>
+        <div class="cell"><button class="s">Ayuda</button><span class="ro" data-efg data-gaze-read="off"></span></div>
+        <div class="cell"><button class="s">Salir</button><span class="ro" data-efg data-gaze-read="off"></span></div>
+      </div>
+    </section>
+    <section class="prose">
+      <h2>Texto</h2>
+      <p>Los ojos se mueven a saltos, varias veces por segundo, y entre salto y salto se quedan quietos un
+        cuarto de segundo. <a href="#">Este enlace</a> está en mitad de una línea, y <a href="#">este otro</a> también.</p>
+      <p>Al leer, la mirada avanza de izquierda a derecha y vuelve al principio de la línea siguiente.</p>
+    </section>
+  </div>
+  <section class="pie">
+    <div style="width: 100%">
+      <h2>Menú circular</h2>
+      <svg id="pie" viewBox="-160 -160 320 320" width="100%"></svg>
+    </div>
+  </section>
+  <aside>
     <h2>Lo que has mirado</h2>
     <div id="log"></div>
-  </section>
-  <section>
-    <h2>Menú circular</h2>
-    <svg id="pie" viewBox="-160 -160 320 320" width="100%" style="max-width:420px"></svg>
-  </section>
-  <section>
-    <h2>Texto</h2>
-    <p>Los ojos se mueven a saltos, varias veces por segundo, y entre salto y salto se quedan quietos un
-      cuarto de segundo. <a href="#">Este enlace</a> está en mitad de una línea, y <a href="#">este otro</a> también.</p>
-    <p>Al leer, la mirada avanza de izquierda a derecha y vuelve al principio de la línea siguiente.</p>
     <h2>Resultado de la prueba</h2>
-    <div id="res">—</div>
-  </section>
+    <div id="res">todavía no hay prueba</div>
+    <p class="note">La prueba enciende 20 objetivos al azar, uno cada 1,4 s, y anota cuál cree el filtro que mirabas. Desmarca el imán para comparar.</p>
+  </aside>
 </main>
 <script src="/efg.js" data-show></script>
 <script>
   // pie menu: 6 slices, JS-bound (no button tags): found through cursor:pointer
   const pie = document.getElementById("pie"), names = ["Inicio", "Correo", "Fotos", "Mapa", "Música", "Notas"];
+  const readouts = [];   // live readout per target: {el, ro}
+  const svgEl = (tag) => document.createElementNS("http://www.w3.org/2000/svg", tag);
   names.forEach((n, i) => {
     const a0 = (i / 6) * 2 * Math.PI - Math.PI / 2, a1 = ((i + 1) / 6) * 2 * Math.PI - Math.PI / 2, R = 150, r = 50;
     const P = (a, rr) => `${(rr * Math.cos(a)).toFixed(1)} ${(rr * Math.sin(a)).toFixed(1)}`;
@@ -71,9 +173,16 @@
     p.addEventListener("click", () => {});
     pie.appendChild(p);
     const t = document.createElementNS("http://www.w3.org/2000/svg", "text"), am = (a0 + a1) / 2;
-    t.setAttribute("x", (100 * Math.cos(am)).toFixed(1)); t.setAttribute("y", (100 * Math.sin(am) + 5).toFixed(1));
+    t.setAttribute("x", (100 * Math.cos(am)).toFixed(1)); t.setAttribute("y", (100 * Math.sin(am) + 1).toFixed(1));
+    t.setAttribute("class", "n");
     t.textContent = n; pie.appendChild(t);
+    const v = svgEl("text");
+    v.setAttribute("x", (100 * Math.cos(am)).toFixed(1)); v.setAttribute("y", (100 * Math.sin(am) + 16).toFixed(1));
+    v.setAttribute("class", "v"); v.setAttribute("data-efg", "");
+    pie.appendChild(v);
+    readouts.push({ el: p, ro: v });
   });
+  document.querySelectorAll("main .cell").forEach((c) => readouts.push({ el: c.querySelector("button"), ro: c.querySelector(".ro"), cell: c }));
 
   // attractors: every button and pie slice gets data-gaze (the checkbox removes it, to compare)
   const mag = document.getElementById("mag");
@@ -81,11 +190,27 @@
   mag.onchange = setMag; setMag();
   const st = document.getElementById("st"), log = document.getElementById("log");
   setInterval(() => {
+    if (!window.efg) return;
     const m = efg.mapping, g = efg.elementFromGaze();
     st.textContent = (m.fitted ? "ventana localizada" : "mueve el ratón y déjalo quieto un momento dentro de la página") +
       (g ? ` · miras: ${(g.element.getAttribute("aria-label") || g.element.textContent).trim()} (${(100 * g.p).toFixed(0)}%)` : "");
     log.textContent = efg.history.slice(-14).reverse().map((h) => `${((h.end - h.start) / 1000).toFixed(2).padStart(5)} s  ${h.label}`).join("\n");
   }, 150);
+
+  // live readout: the magnet's posterior for each target, and the dwell on the one being looked at
+  const key = (el) => (el.getAttribute("aria-label") || el.textContent).trim().replace(/\s+/g, " ").slice(0, 40);
+  readouts.forEach((r) => { r.key = key(r.el); r.ro.textContent = "p 0.00"; });
+  setInterval(() => {
+    if (!window.efg) return;
+    const post = new Map(efg.posterior().map((q) => [q.label, q.p])), g = efg.elementFromGaze();
+    for (const r of readouts) {
+      const cur = !!g && g.element === r.el, p = cur ? g.p : post.get(r.key) || 0;
+      const s = `p ${p.toFixed(2)}` + (cur ? ` · ${(g.dwellMs / 1000).toFixed(1)} s` : "");
+      if (r.ro.textContent !== s) r.ro.textContent = s;
+      if (r.cell) r.cell.classList.toggle("hot", p >= 0.05);
+      else r.ro.style.fill = cur ? "var(--acc-ink)" : p >= 0.05 ? "var(--dim)" : "";
+    }
+  }, 100);
 
   // test: one target lights up; you look at it; 1.4 s later we read what efg decided
   const targets = () => [...document.querySelectorAll("main button, svg path")];
