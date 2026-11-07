@@ -221,10 +221,11 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
     root.attributes("-topmost", True)
     canvas = tk.Canvas(root, bg=TRANSPARENT, highlightthickness=0)
     canvas.pack(fill="both", expand=True)
-    dot_id = canvas.create_oval(0, 0, 0, 0, fill="#ff2d20", outline="#ffffff", width=2, state="hidden")
+    from . import look
+    dot_id = canvas.create_oval(0, 0, 0, 0, fill=look.ACCENT, outline="#ffffff", width=2, state="hidden")
     spring = Spring2D(omega=28.0)        # display physics: glide, don't teleport
-    lens_id = canvas.create_rectangle(0, 0, 0, 0, outline="#4fc3ff", width=3, state="hidden")
-    ring_id = canvas.create_arc(0, 0, 0, 0, start=90, extent=0, style="arc", outline="#e8a33d", width=4, state="hidden")
+    lens_id = canvas.create_rectangle(0, 0, 0, 0, outline=look.ACCENT_HI, width=2, state="hidden")
+    ring_id = canvas.create_arc(0, 0, 0, 0, start=90, extent=0, style="arc", outline=look.ACCENT, width=4, state="hidden")
     lens_spring = Spring2D(omega=30.0)
     lens_spring.p = None
 

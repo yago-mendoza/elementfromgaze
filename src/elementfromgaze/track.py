@@ -17,7 +17,7 @@ import time
 
 import numpy as np
 
-from . import screen
+from . import look, screen
 from .app import BGS, INTRO_BG, PURSUIT_LAG_S, Segment, Stage, message
 from .adapt import AffineKalman
 from .filters import GazeSmoother
@@ -96,16 +96,13 @@ class TrackStage(Stage):
         c = self.canvas
         c.delete("target")
         if seg.phase == "msg":
-            c.create_text(self.W / 2, self.H / 2, text=seg.message, fill="#eeeeee", font=("Segoe UI", 20),
-                          justify="center", tags="target")
+            look.message(c, self.W, self.H, seg.message)
             return
         x, y = seg.target(lt)
-        ink = _ink(seg.bg)
-        c.create_oval(x - 15, y - 15, x + 15, y + 15, outline=ink, width=3, tags="target")
-        c.create_oval(x - 2, y - 2, x + 2, y + 2, fill=ink, outline="", tags="target")
+        look.ring(c, x, y, light_bg=_ink(seg.bg) != "#ffffff")
         if self._shown.get(id(seg)) and self._dot is not None:
             px, py = self._dot
-            c.create_oval(px - 9, py - 9, px + 9, py + 9, fill="#ff2d20", outline="", tags="target")
+            c.create_oval(px - 9, py - 9, px + 9, py + 9, fill=look.BAD, outline="", tags="target")
 
     def finish(self) -> None:
         self.report = summarize(self.rec, self.W, self.H)
@@ -114,15 +111,14 @@ class TrackStage(Stage):
         c.configure(bg=INTRO_BG)
         r = self.report
         if r:
-            lines = [f"error mediano del punto {r['all']['median_deg']}° · sesgo medio ({r['all']['bias_px'][0]:+d}, {r['all']['bias_px'][1]:+d}) px"]
+            lines = [f"sesgo medio ({r['all']['bias_px'][0]:+d}, {r['all']['bias_px'][1]:+d}) px"]
             for band in ("arriba", "medio", "abajo"):
                 b = r["bands"].get(band)
                 if b:
-                    lines.append(f"{band:7s}: error {b['median_deg']}° · sesgo ({b['bias_px'][0]:+d}, {b['bias_px'][1]:+d}) px")
+                    lines.append(f"{band:7s} {b['median_deg']}°   sesgo ({b['bias_px'][0]:+d}, {b['bias_px'][1]:+d}) px")
             if r.get("shown") and r.get("hidden"):
-                lines.append(f"punto visible {r['shown']['median_deg']}° · oculto {r['hidden']['median_deg']}°")
-            c.create_text(W / 2, H / 2, text="\n".join(lines) + "\n\nESC para cerrar", fill="#eeeeee",
-                          font=("Consolas", 16), justify="left")
+                lines.append(f"punto visible {r['shown']['median_deg']}°   oculto {r['hidden']['median_deg']}°")
+            look.result(c, W, H, "error mediano", f"{r['all']['median_deg']}°", lines)
         self.root.unbind("<space>")
 
 
@@ -267,32 +263,30 @@ class WarmupStage(Stage):
         c = self.canvas
         c.delete("target")
         if seg.phase == "msg":
-            c.create_text(self.W / 2, self.H / 2, text=seg.message, fill="#eeeeee", font=("Segoe UI", 20), tags="target")
+            look.message(c, self.W, self.H, seg.message)
             return
         x, y = seg.target(lt)
         if seg.phase == "check":     # the button is centred on the target (points sit far enough from the edges)
             h = self.btn_h
-            c.create_rectangle(x - h, y - h / 2, x + h, y + h / 2, fill="#e8a33d", outline="#ffd27a", tags="target")
-            c.create_text(x, y, text="Aceptar", fill="#1b1b1b", font=("Segoe UI", int(h * 0.3)), tags="target")
+            look.button(c, x, y, 2 * h, h, "Aceptar")
             return
-        ink = _ink(seg.bg)
         if seg.phase == "vor":         # head-turn guide: where to point the nose, and where it points
             R = 150
-            c.create_oval(x - R, y - R, x + R, y + R, outline="#2c3036", width=2, tags="target")
-            c.create_line(x - R, y, x + R, y, fill="#2c3036", tags="target")
-            c.create_line(x, y - R, x, y + R, fill="#2c3036", tags="target")
+            c.create_oval(x - R, y - R, x + R, y + R, outline=look.RULE, width=1, tags="target")
+            c.create_oval(x - R / 2, y - R / 2, x + R / 2, y + R / 2, outline=look.RULE, width=1, dash=(2, 6), tags="target")
+            c.create_line(x - R, y, x + R, y, fill=look.RULE, tags="target")
+            c.create_line(x, y - R, x, y + R, fill=look.RULE, tags="target")
             gy, gp = head_target(lt)
             gx_, gy_ = x + gy / HEAD_AMP * R, y - gp / HEAD_AMP * R
-            c.create_oval(gx_ - 11, gy_ - 11, gx_ + 11, gy_ + 11, fill="#4fc3ff", outline="", tags="target")
+            c.create_oval(gx_ - 10, gy_ - 10, gx_ + 10, gy_ + 10, fill=look.STEEL, outline="", tags="target")
             if self.head["now"] is not None:
                 sg = self._head_signs()
                 ay, ap = self.head["now"][1] * sg[0], self.head["now"][0] * sg[1]
                 ax_, ay_ = x + np.clip(ay / HEAD_AMP, -1.3, 1.3) * R, y - np.clip(ap / HEAD_AMP, -1.3, 1.3) * R
-                c.create_oval(ax_ - 14, ay_ - 14, ax_ + 14, ay_ + 14, outline="#e8a33d", width=3, tags="target")
-            c.create_text(x, y + R + 34, text="mira el aro blanco · mueve la cabeza para llevar el círculo naranja al punto azul",
-                          fill="#8b9098", font=("Segoe UI", 13), tags="target")
-        c.create_oval(x - 15, y - 15, x + 15, y + 15, outline=ink, width=3, tags="target")
-        c.create_oval(x - 2, y - 2, x + 2, y + 2, fill=ink, outline="", tags="target")
+                c.create_oval(ax_ - 15, ay_ - 15, ax_ + 15, ay_ + 15, outline=look.ACCENT, width=3, tags="target")
+            c.create_text(x, y + R + 34, text="mira el aro blanco  ·  mueve la cabeza para llevar el círculo naranja al punto azul",
+                          fill=look.DIM, font=(look.SANS, 13), tags="target")
+        look.ring(c, x, y, light_bg=_ink(seg.bg) != "#ffffff")
 
 
 def check_correction(model: GazeModel, rec, W, H) -> dict | None:

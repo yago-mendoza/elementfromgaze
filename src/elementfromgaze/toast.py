@@ -7,10 +7,10 @@ from __future__ import annotations
 import ctypes
 import tkinter as tk
 
-from . import screen
+from . import look, screen
 
-BG, FG, DIM = "#1f2226", "#f2f2f2", "#a9aeb6"
-ACCENTS = {"info": "#4fc3ff", "warn": "#e8a33d", "ok": "#34c759"}
+BG, FG, DIM = look.PANEL, look.INK, look.DIM
+ACCENTS = {"info": look.ACCENT, "warn": look.WARN, "ok": look.GOOD}
 
 
 class Toaster:
@@ -26,13 +26,15 @@ class Toaster:
         tl.attributes("-topmost", True)
         tl.attributes("-alpha", 0.0)
         tl.configure(bg=BG)
-        bar = tk.Frame(tl, bg=ACCENTS.get(kind, ACCENTS["info"]), width=4)
+        bar = tk.Frame(tl, bg=ACCENTS.get(kind, ACCENTS["info"]), width=3)
         bar.pack(side="left", fill="y")
-        box = tk.Frame(tl, bg=BG, padx=16, pady=12)
+        box = tk.Frame(tl, bg=BG, padx=18, pady=14)
         box.pack(side="left", fill="both", expand=True)
-        tk.Label(box, text=title, bg=BG, fg=FG, font=("Segoe UI Semibold", 11), anchor="w", justify="left").pack(fill="x")
+        tk.Label(box, text="ELEMENTFROMGAZE", bg=BG, fg=ACCENTS.get(kind, ACCENTS["info"]), font=(look.MONO, 8),
+                 anchor="w").pack(fill="x")
+        tk.Label(box, text=title, bg=BG, fg=FG, font=(look.SANS_SEMI, 11), anchor="w", justify="left").pack(fill="x", pady=(2, 0))
         if body:
-            tk.Label(box, text=body, bg=BG, fg=DIM, font=("Segoe UI", 10), anchor="w", justify="left",
+            tk.Label(box, text=body, bg=BG, fg=DIM, font=(look.SANS, 10), anchor="w", justify="left",
                      wraplength=380).pack(fill="x", pady=(3, 0))
         tl.update_idletasks()
         w, h = max(tl.winfo_reqwidth(), 300), tl.winfo_reqheight()

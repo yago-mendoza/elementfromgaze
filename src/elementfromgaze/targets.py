@@ -23,7 +23,7 @@ import time
 
 import numpy as np
 
-from . import screen
+from . import look, screen
 from .app import INTRO_BG, Segment, Stage, message
 from .filters import GazeSmoother
 from .overlay import OFF_MARGIN_PX
@@ -126,12 +126,12 @@ class TargetsStage(Stage):
         c = self.canvas
         c.delete("grid")
         g = self.grids[gi]
-        fs = max(7, int(g.h * 0.32))
+        fs = -max(10, int(g.h * 0.36))     # pixels (negative), so text fits the box at any DPI scaling
         self._ids = []
         for (x, y), w in zip(g.centres, g.words):
-            r = c.create_rectangle(x - g.w / 2, y - g.h / 2, x + g.w / 2, y + g.h / 2, fill="#2b2b2b",
-                                   outline="#3d3d3d", tags="grid")
-            c.create_text(x, y, text=w, fill="#8a8a8a", font=("Segoe UI", fs), tags="grid")
+            r = c.create_rectangle(x - g.w / 2, y - g.h / 2, x + g.w / 2, y + g.h / 2, fill=look.PANEL,
+                                   outline=look.RULE, tags="grid")
+            c.create_text(x, y, text=w, fill=look.DIM, font=(look.SANS, fs), tags="grid")
             self._ids.append(r)
         self._drawn_grid, self._lit = gi, -1
 
@@ -142,22 +142,21 @@ class TargetsStage(Stage):
         if seg.phase == "msg":
             c.delete("grid")
             self._drawn_grid = -1
-            c.create_text(self.W / 2, self.H / 2, text=seg.message, fill="#eeeeee", font=("Segoe UI", 20),
-                          justify="center", tags="target")
+            look.message(c, self.W, self.H, seg.message)
             return
         if gi != self._drawn_grid:
             self._draw_grid(gi)
         if b != self._lit:
             if self._lit >= 0:
-                c.itemconfigure(self._ids[self._lit], fill="#2b2b2b", outline="#3d3d3d")
-            c.itemconfigure(self._ids[b], fill="#e8a33d", outline="#ffd27a")
+                c.itemconfigure(self._ids[self._lit], fill=look.PANEL, outline=look.RULE)
+            c.itemconfigure(self._ids[b], fill=look.ACCENT, outline=look.ACCENT_HI)
             self._lit = b
         if self.show and self._dot is not None:
             g = self.grids[gi]
             k = g.nearest(np.asarray(self._dot))
             x, y = g.centres[k]
             c.create_rectangle(x - g.w / 2 - 3, y - g.h / 2 - 3, x + g.w / 2 + 3, y + g.h / 2 + 3,
-                               outline="#4fc3ff", width=3, tags="target")
+                               outline=look.INK, width=2, tags="target")
 
     def _draw_preview(self, target):
         if self.started_at is None:      # only on the intro: during trials it would cover buttons
@@ -168,8 +167,11 @@ class TargetsStage(Stage):
         c, W, H = self.canvas, self.W, self.H
         c.delete("all")
         c.configure(bg=INTRO_BG)
-        c.create_text(W / 2, H / 2, text=format_report(self.report) + "\n\nESC para cerrar", fill="#eeeeee",
-                      font=("Consolas", 15), justify="left")
+        c.create_text(W / 2, H / 2 - 200, text="RESULTADO", fill=look.ACCENT, font=(look.MONO, 10))
+        t = c.create_text(W / 2, H / 2 - 170, text=format_report(self.report), fill=look.INK, font=(look.MONO, 14),
+                          justify="left", anchor="n")
+        bb = c.bbox(t)
+        look.keycap(c, W / 2 - 50, (bb[3] if bb else H / 2) + 50, "ESC", "cerrar")
         self.root.unbind("<space>")
 
 

@@ -26,8 +26,10 @@ from .features import BLENDSHAPE_NAMES, Sample, head_euler
 from .filters import BlinkDetector
 from .tracker import DATA, SESSIONS, USER_MODEL, FeatureWorker, GazeModel, load_sessions
 
+from . import look
+
 PROTOCOL = "v2"
-INTRO_BG = "#1b1b1b"
+INTRO_BG = look.GROUND
 # Real use mixes dark and bright UIs, and screen light changes how the face is lit:
 # cycle backgrounds so the model never learns one lighting.
 BGS = ["#1b1b1b", "#f0f0f0", "#7a7a7a"]
@@ -213,21 +215,15 @@ class Stage:
         return None
 
     def _intro(self) -> None:
-        c, W, H = self.canvas, self.W, self.H
-        c.create_text(W / 2, H / 2 - 50, text=self.title, fill="#eeeeee", font=("Segoe UI", 26))
-        c.create_text(
-            W / 2, H / 2 + 20, fill="#9a9a9a", font=("Segoe UI", 14), justify="center",
-            text=(f"Duración ≈ {self._bounds[-1]:.0f} s. " if self._bounds[-1] < 600 else "") + self.intro_text,
-        )
-        self._status_id = c.create_text(W / 2, H - 40, fill="#6a6a6a", font=("Consolas", 11), text="")
+        self._status_id = look.intro(self.canvas, self.W, self.H, self.title, self.intro_text, self._bounds[-1])
         self.root.after(200, self._intro_tick)
 
     def _intro_tick(self) -> None:
         if self.started_at is not None or self.aborted:
             return
-        face = "cara detectada" if self.worker.face_seen else "NO veo tu cara: ajusta luz / posición"
-        ir = f"IR {self.ir.fps():.1f} fps" if self.ir else "sin IR"
-        self.canvas.itemconfigure(self._status_id, text=f"{face}  ·  {self.worker.stats()}  ·  {ir}")
+        ir = f"IR {self.ir.fps():.1f} fps" if self.ir else ""
+        self.canvas.itemconfigure(self._status_id, text=look.status_text(self.worker.face_seen, self.worker.stats(), ir),
+                                  fill=look.FAINT if self.worker.face_seen else look.BAD)
         while not self.samples.empty():
             s = self.samples.get_nowait()
             self._last_frame, self._last_quality = s.frame, (time.monotonic(), s.eyes_ok)
@@ -263,25 +259,23 @@ class Stage:
         c = self.canvas
         c.delete("preview")
         c.create_image(x0, y0, image=self._preview_img, anchor="nw", tags="preview")
-        c.create_rectangle(x0 - 2, y0 - 2, x0 + pw + 2, y0 + ph + 2, outline="#2fbf5a" if good else "#ff3b30",
-                           width=3, tags="preview")
+        c.create_rectangle(x0 - 2, y0 - 2, x0 + pw + 2, y0 + ph + 2, outline=look.GOOD if good else look.BAD,
+                           width=2, tags="preview")
 
     def _draw(self, seg: Segment, lt: float) -> None:
         c = self.canvas
         c.delete("target")
         if seg.phase == "msg":
-            c.create_text(self.W / 2, self.H / 2, text=seg.message, fill="#eeeeee",
-                          font=("Segoe UI", 20), justify="center", tags="target")
+            look.message(c, self.W, self.H, seg.message)
             return
         x, y = seg.target(lt)
+        light = _is_light(seg.bg)
         if seg.phase == "vor":
-            c.create_oval(x - 24, y - 24, x + 24, y + 24, outline="#2fa8e0", width=3, tags="target")
-        elif seg.phase != "pursuit":
-            r = 26 * max(0.25, 1 - lt / max(seg.record_from, 1e-3))
-            c.create_oval(x - r, y - r, x + r, y + r, outline="#ff5a4f", width=2, tags="target")
-        c.create_oval(x - 6, y - 6, x + 6, y + 6, fill="#ff3b30", outline="", tags="target")
-        c.create_oval(x - 1.5, y - 1.5, x + 1.5, y + 1.5,
-                      fill="#000000" if _is_light(seg.bg) else "#ffffff", outline="", tags="target")
+            look.target(c, x, y, head=True, light_bg=light)
+        elif seg.phase == "pursuit":
+            look.target(c, x, y, light_bg=light)
+        else:
+            look.target(c, x, y, settle=lt / max(seg.record_from, 1e-3), light_bg=light)
 
     def _start(self) -> None:
         if self.started_at is None:
@@ -325,6 +319,7 @@ class Stage:
             bg = seg.bg if seg.phase != "msg" else INTRO_BG
             self.canvas.configure(bg=bg)
         self._draw(seg, lt)
+        look.progress(self.canvas, self.W, now / self._bounds[-1], light_bg=seg.phase != "msg" and _is_light(seg.bg))
         self._draw_quality()
         if seg.phase == "msg":
             self.canvas.delete("preview")
@@ -338,9 +333,7 @@ class Stage:
         bad = (not self.worker.face_seen) or (not ok and time.monotonic() - t_q < 0.5)
         self.canvas.delete("quality")
         if bad:
-            self.canvas.create_rectangle(4, 4, self.W - 4, self.H - 4, outline="#ff3b30", width=8, tags="quality")
-            self.canvas.create_text(self.W / 2, 34, text="no veo bien tus ojos", fill="#ff3b30",
-                                    font=("Segoe UI", 14), tags="quality")
+            look.warning(self.canvas, self.W, self.H, "no veo bien tus ojos")
 
     def on_sample(self, s, target, seg, valid) -> None:
         pass
