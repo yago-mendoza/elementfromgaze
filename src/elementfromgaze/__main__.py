@@ -9,6 +9,7 @@
   efg track        follow a moving ring; starts with the posture warm-up (--rewarm redoes it)
   efg control      gaze over the whole desktop, snapping to any app's buttons (--click: long blink)
   efg gesture      record your long blink once, so --click can tell it from normal blinks
+  efg app          small window + tray icon: start any of the above with one click
 
 Run it as `python -m elementfromgaze ...` if Windows blocks efg.exe (Smart App Control).
 Ctrl+Alt+R recalibrates (~45 s), Ctrl+Alt+arrows nudge the dot, Ctrl+Alt+G quits.
@@ -52,7 +53,7 @@ def main() -> None:
         except Exception:
             pass
     ap =argparse.ArgumentParser(prog="efg", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--hd", action="store_true", help="colour camera at 1920x1080 (more eye detail, ~17 fps)")
+    ap.add_argument("--hd", action="store_true", help="colour camera at 1920x1080 (more eye detail; 30 fps in good light, half that in dim light)")
     ap.add_argument("--no-train", action="store_true", help="record only; don't retrain after a session")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("probe")
@@ -91,6 +92,9 @@ def main() -> None:
     gn = sub.add_parser("generic", help="developer: build the base for new users from MPIIFaceGaze (prepare <Data dir> | build)")
     gn.add_argument("args", nargs="*")
     sub.add_parser("gesture", help="~20 s: record normal blinks and long blinks to set the click threshold")
+    sub.add_parser("app", help="launcher window + tray icon: every mode with one click (HD is a toggle there)")
+    wt = sub.add_parser("weights", help="download the published weights: generic (base for new users) and/or author")
+    wt.add_argument("which", nargs="*", choices=["generic", "author"], default=["generic"])
     dt = sub.add_parser("dot")
     dt.add_argument("--no-learn", action="store_true", help="do not learn from clicks/typing")
     dt.add_argument("--no-warmup", action="store_true", help="skip the ~80 s posture warm-up")
@@ -122,6 +126,14 @@ def main() -> None:
     if a.cmd == "generic":
         from .generic import main as generic_main
         generic_main(a.args)
+        return
+    if a.cmd == "app":
+        from .launcher import main as launcher_main
+        launcher_main()
+        return
+    if a.cmd == "weights":
+        from .weights import main as weights_main
+        weights_main(a.which)
         return
     if a.cmd == "gesture":
         from .gesture import gesture

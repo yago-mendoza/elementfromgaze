@@ -199,7 +199,9 @@ def new_user_model():
     from .tracker import GazeModel
 
     if not GENERIC_BASE.exists():
-        return None
+        from .weights import fetch
+        if not fetch("generic"):       # first run on a new machine: the published base
+            return None
     m = GazeModel(kind="poly")
     m.appearance = pickle.loads(GENERIC_BASE.read_bytes())
     for a in [m.appearance, *getattr(m.appearance, "members", [])]:
