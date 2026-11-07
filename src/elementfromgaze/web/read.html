@@ -105,7 +105,16 @@
     rec.labels.push({ t: d.t, line: T.findIndex((L) => L.el === d.element && L.index === d.index), p: d.p });
   });
 
+  // the truth assumes a still page: the whole text must fit (a test on 2026-11-07 scrolled 130 px and was void)
+  const fits = () => { const r = txt.getBoundingClientRect(); return r.bottom + scrollY <= innerHeight && r.top + scrollY >= 0; };
+  let scrolled = false;
+  addEventListener("scroll", () => { if (rec && scrollY > 2) scrolled = true; });
   function start() {
+    if (!fits()) {
+      $("sum").innerHTML = '<span class="bad">El texto no cabe en la ventana: maximízala, o baja el zoom (Ctrl y -) hasta que se vea entero, y pulsa Empezar otra vez.</span>';
+      return;
+    }
+    scrolled = false;
     rec = { fix: [], labels: [], when: new Date().toISOString() };
     txt.classList.remove("off"); go.disabled = true; done.disabled = false;
     $("sum").textContent = ""; $("tab").innerHTML = "";
@@ -168,7 +177,7 @@
       filterAcc: sum("filt") / nf, naiveAcc: sum("naive") / nf, shownShare: sum("shown") / nf,
       shownAcc: sum("shown") ? sum("shownOk") / sum("shown") : null,
       labels: R.labels.length, labelsCorrect: R.labels.filter((l) => l.truth === l.line).length,
-      offset: rd ? rd.offset : null, raw: rd ? rd.raw : null, msPerFix: efg.stats.readMs,
+      offset: rd ? rd.offset : null, raw: rd ? rd.raw : null, msPerFix: efg.stats.readMs, scrolled,
     };
     const css = getComputedStyle(paras[0]);
     const out = { kind: "read_test", when: R.when, layout: { font: css.fontSize, lineHeight: css.lineHeight, width: paras[0].getBoundingClientRect().width },
@@ -182,6 +191,7 @@
     const pc = (v) => (v === null ? "—" : (100 * v).toFixed(0) + " %");
     $("sum").innerHTML = `${N} líneas · ${F.length} fijaciones · barridos claros ${clear}/${N - 1}` +
       (summary.consistent ? "" : ' <span class="bad">(lectura no lineal: verdad aproximada)</span>') +
+      (scrolled ? ' <span class="bad">(la página se desplazó: prueba no válida)</span>' : "") +
       `\nlínea correcta: filtro ${pc(summary.filterAcc)} · más cercana ${pc(summary.naiveAcc)}` +
       `\nresaltado ${pc(summary.shownShare)} del tiempo, acierta ${pc(summary.shownAcc)}` +
       `\netiquetas ${summary.labels}, en la línea correcta ${summary.labelsCorrect}` +

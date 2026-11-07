@@ -21,9 +21,20 @@ class Camera:
             self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        self.cap.set(cv2.CAP_PROP_FPS, 30)
         # The first frames come out overexposed while auto-exposure settles.
         for _ in range(warmup):
             self.cap.read()
+        # In dim light auto-exposure lengthens the exposure and the frame rate halves (2026-11-07:
+        # 16.7 fps instead of 30 at the same resolution): blurrier eyes and half the samples, and
+        # the gaze visibly jumps. Say so, since light is the cure.
+        t0, n = time.monotonic(), 0
+        while n < 15 and time.monotonic() - t0 < 2.0:
+            n += bool(self.cap.read()[0])
+        self.fps = n / max(time.monotonic() - t0, 1e-3)
+        if self.fps < 24:
+            print(f"AVISO: la cámara va a {self.fps:.0f} imágenes/s (debería ir a 30). Suele ser poca luz: "
+                  "enciende una luz delante de ti; con menos imágenes el punto salta más.")
         self._frame: np.ndarray | None = None
         self._seq = 0
         self._cond = threading.Condition()
