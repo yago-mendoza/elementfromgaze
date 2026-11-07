@@ -64,9 +64,13 @@ The first time, it needs no calibration session: the generic base plus the 80-se
     <td><img src="docs/screens/buttons-test.webp" alt="Button-picking test"><br><sub><b><code>targets</code>.</b> A lit button among many, shrinking: measures which sizes you can pick by gaze.</sub></td>
     <td><img src="docs/screens/track-result.webp" alt="Tracking test result"><br><sub><b><code>track</code> result.</b> A real run: 1.46° median while following a moving ring, by screen band.</sub></td>
   </tr>
+  <tr>
+    <td><img src="docs/screens/web-demo.webp" alt="Web demo"><br><sub><b><code>/demo</code>.</b> Magnetic buttons in a page: the one you look at lights up, with its probability and how long you have looked.</sub></td>
+    <td><img src="docs/screens/reading-test.webp" alt="Reading test"><br><sub><b><code>/read</code>.</b> Read the text once; the page underlines the line it thinks you are on and scores it at the end.</sub></td>
+  </tr>
 </table>
 
-<sub>Screens drawn by the app's own drawing code; the camera preview that sits at the bottom of the real screens is left out.</sub>
+<sub>Screens drawn by the app's own code with a simulated gaze state (the web pages) and without the camera preview that sits at the bottom of the real calibration screens.</sub>
 
 ## Which mode do I want
 
