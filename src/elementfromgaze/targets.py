@@ -127,11 +127,11 @@ class TargetsStage(Stage):
         c.delete("grid")
         g = self.grids[gi]
         fs = -max(10, int(g.h * 0.36))     # pixels (negative), so text fits the box at any DPI scaling
-        self._ids = []
+        self._ids, self._tids = [], []
         for (x, y), w in zip(g.centres, g.words):
             r = c.create_rectangle(x - g.w / 2, y - g.h / 2, x + g.w / 2, y + g.h / 2, fill=look.PANEL,
                                    outline=look.RULE, tags="grid")
-            c.create_text(x, y, text=w, fill=look.DIM, font=(look.SANS, fs), tags="grid")
+            self._tids.append(c.create_text(x, y, text=w, fill=look.DIM, font=(look.SANS, fs), tags="grid"))
             self._ids.append(r)
         self._drawn_grid, self._lit = gi, -1
 
@@ -149,7 +149,9 @@ class TargetsStage(Stage):
         if b != self._lit:
             if self._lit >= 0:
                 c.itemconfigure(self._ids[self._lit], fill=look.PANEL, outline=look.RULE)
+                c.itemconfigure(self._tids[self._lit], fill=look.DIM)
             c.itemconfigure(self._ids[b], fill=look.ACCENT, outline=look.ACCENT_HI)
+            c.itemconfigure(self._tids[b], fill="#1A1210")
             self._lit = b
         if self.show and self._dot is not None:
             g = self.grids[gi]
