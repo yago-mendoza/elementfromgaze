@@ -12,10 +12,10 @@ rectangle, "looking at anything else" is uniform over the screen:
 Snap at posterior > 0.8, release below 0.4. Two neighbours that the error can't tell apart split
 the posterior and nothing is snapped: it never pretends to know.
 
-How to click: squint (narrow the eyes without closing them) and hold ~0.3 s. MediaPipe's
-eyeSquint blendshape, relative to your own rolling baseline; rejected while blinking or smiling
-(smiling raises the cheeks and the squint score). The element is frozen at squint onset, because
-narrowing the lids shifts the vertical gaze estimate. Thresholds come from `efg gesture`.
+How to click: a long blink (close both eyes and hold; the hold time and closed threshold come
+from `efg gesture`, which checks that your normal blinks stay well below the hold). The element is
+frozen when the eyes start closing, because closing lids drag the vertical gaze estimate down.
+The older squint gesture (`"mode": "squint"` in gesture.json) is still supported.
 The click is a real mouse click at the element's centre (works in any app); the cursor goes back.
 """
 
