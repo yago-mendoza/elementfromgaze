@@ -28,6 +28,8 @@
 
 The goal is one call, **`elementFromGaze()`**: which button, line or word you are looking at, the way `document.elementFromPoint` answers for the mouse. I built it on a ThinkPad with nothing but its webcam, no infrared tracker, no GPU, and measured every piece on myself. After an 80-second warm-up it lands within about **1°** of where I look (about 1 cm on the screen), which is enough to pick a button 2 to 3° tall with your eyes and not enough for the 25-pixel menus of Windows. Both halves of that sentence are in the [chart below](#how-big-must-a-button-be).
 
+**Try it without installing anything: [the live demo](https://infraphysics.net/playgrounds/5530619/gaze-live)** runs the strangers' base in your browser (MediaPipe for the web, the eye networks in plain JavaScript), calibrates on your face in 80 seconds and then lights up buttons for you to pick by looking. The camera image never leaves the tab.
+
 ---
 
 ## TL;DR
@@ -205,7 +207,7 @@ Experimental, Windows only, built and measured on one person.
 - [ ] A magnifier for small targets: look at a region, it enlarges, pick inside
 - [ ] Automatic periodic retraining
 - [ ] A second and third person; a base trained on many more people, with and without glasses
-- [ ] A live demo in the browser (MediaPipe for the web and the eye network in ONNX)
+- [x] [A live demo in the browser](https://infraphysics.net/playgrounds/5530619/gaze-live): the eye networks hand-ported to JavaScript (`docs/export_web.py` writes their weights; same angles as PyTorch to 0.02°), and a light calibration (13 numbers per network, by least squares) that matched the full warm-up on my held-out sessions, 2.12° mean
 
 ## License
 
