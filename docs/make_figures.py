@@ -6,8 +6,8 @@ from __future__ import annotations
 from pathlib import Path
 
 OUT = Path(__file__).parent / "assets"
-BG, PANEL, RULE, INK, DIM, FAINT = "#111214", "#1A1C1F", "#2A2D31", "#ECEAE6", "#8C9097", "#50545B"
-ACCENT, STEEL, GREEN, VIOLET, GOLD = "#C8643B", "#6FA8C9", "#5DBB73", "#9B8AE0", "#D9A441"
+BG, PANEL, RULE, INK, DIM, FAINT = "#120E0F", "#1E1617", "#302426", "#F0E8E6", "#9A8D8E", "#5C4C4E"
+ACCENT, STEEL, GREEN, VIOLET, GOLD = "#E5322D", "#6FA8C9", "#5DBB73", "#9B8AE0", "#D9A441"
 FONT = "ui-monospace, SFMono-Regular, Consolas, Menlo, monospace"
 SANS = "-apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif"
 
@@ -58,7 +58,7 @@ def pipeline():
     b.append(arrow(843, 156, 843, 214))
     b.append(arrow(754, 267, 714, 267))
     b.append(arrow(518, 267, 478, 267))
-    b.append(box(28, 214, 200, 106, "you", ["pointer on the button", "long blink: click", "efg.js events in pages"], color=ACCENT, fill="#1E1714"))
+    b.append(box(28, 214, 200, 106, "you", ["pointer on the button", "long blink: click", "efg.js events in pages"], color=ACCENT, fill="#2A1314"))
     b.append(arrow(268, 267, 228, 267))
     # row 3: learning
     b.append(box(268, 378, 446, 110, "learning on the ride", [
@@ -74,7 +74,7 @@ def pipeline():
     b.append(f'<line x1="128" y1="433" x2="268" y2="433" stroke="{FAINT}" stroke-width="1.4"/>')
     b.append(f'<text x="138" y="392" font-size="10.5" fill="{FAINT}">clicks, keys</text>')
     # key strip
-    b.append(f'<rect x="0" y="512" width="{W}" height="48" fill="#15171A"/><line x1="0" y1="512" x2="{W}" y2="512" stroke="{RULE}"/>')
+    b.append(f'<rect x="0" y="512" width="{W}" height="48" fill="#181213"/><line x1="0" y1="512" x2="{W}" y2="512" stroke="{RULE}"/>')
     keys = [(FAINT, "hardware and outside libraries"), (GREEN, "data, labels"), (VIOLET, "trained weights"),
             (GOLD, "what is measured now"), (ACCENT, "what you see")]
     x = 28
@@ -120,7 +120,7 @@ def size_chart():
     b.append(line(CLICK_CURVE, STEEL, "5 4"))
     b.append(line(SIZE_CURVE, ACCENT))
     b.append(f'<text x="{X(3.05)}" y="{Y(0.946) + 22}" font-size="11.5" fill="{GOLD}">95% from 3° (184 px)</text>')
-    b.append(f'<rect x="0" y="422" width="{W}" height="48" fill="#15171A"/><line x1="0" y1="422" x2="{W}" y2="422" stroke="{RULE}"/>')
+    b.append(f'<rect x="0" y="422" width="{W}" height="48" fill="#181213"/><line x1="0" y1="422" x2="{W}" y2="422" stroke="{RULE}"/>')
     b.append(f'<line x1="28" y1="446" x2="48" y2="446" stroke="{ACCENT}" stroke-width="2.2"/>'
              f'<text x="56" y="450" font-size="10.5" fill="{DIM}">1 s look, after the warm-up</text>')
     b.append(f'<line x1="300" y1="446" x2="320" y2="446" stroke="{STEEL}" stroke-width="2.2" stroke-dasharray="5 4"/>'
@@ -129,7 +129,7 @@ def size_chart():
     (OUT / "button-size.svg").write_text(svg(W, H, "\n".join(b)), encoding="utf-8")
 
 
-BAD_BG = "#3A1F1A"
+BAD_BG = "#3A1A1C"
 
 if __name__ == "__main__":
     OUT.mkdir(parents=True, exist_ok=True)

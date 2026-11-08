@@ -2,6 +2,10 @@
   <a href="https://infraphysics.net"><img src="docs/assets/infraphysics.svg" width="72" alt="InfraPhysics"></a>
 </p>
 
+<p align="center">
+  <img src="docs/assets/cover.webp" width="900" alt="A head drawn in red infrared particles looks along a thin ray, through calibration rings, at one glowing button in a grid on a screen">
+</p>
+
 <h1 align="center">elementfromgaze</h1>
 
 <p align="center">
@@ -10,11 +14,11 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/code-MIT-blue" alt="Code: MIT"></a>
-  <a href="#the-weights"><img src="https://img.shields.io/badge/weights-CC%20BY%20%7C%20CC%20BY--NC--SA-lightgrey" alt="Weights: CC BY 4.0 and CC BY-NC-SA 4.0"></a>
-  <img src="https://img.shields.io/badge/platform-Windows-0078D6" alt="Windows">
-  <img src="https://img.shields.io/badge/python-3.13-3776AB" alt="Python 3.13">
-  <img src="https://img.shields.io/badge/runs-on%20CPU%2C%20offline-brightgreen" alt="Runs on CPU, offline">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/code-MIT-E5322D" alt="Code: MIT"></a>
+  <a href="#the-weights"><img src="https://img.shields.io/badge/weights-CC%20BY%20%7C%20CC%20BY--NC--SA-B3202A" alt="Weights: CC BY 4.0 and CC BY-NC-SA 4.0"></a>
+  <img src="https://img.shields.io/badge/platform-Windows-8A1C1F" alt="Windows">
+  <img src="https://img.shields.io/badge/python-3.13-8A1C1F" alt="Python 3.13">
+  <img src="https://img.shields.io/badge/runs-on%20CPU%2C%20offline-B3202A" alt="Runs on CPU, offline">
 </p>
 
 <p align="center">
@@ -56,10 +60,10 @@ The first time, it needs no calibration session: the generic base plus the 80-se
 <table>
   <tr>
     <td width="50%"><img src="docs/screens/warmup-intro.webp" alt="Warm-up intro screen"><br><sub><b>Warm-up, 78 s.</b> Every session starts here: sit as you will work, follow the ring.</sub></td>
-    <td width="50%"><img src="docs/screens/fixation.webp" alt="A fixation target"><br><sub><b>Fixation target.</b> A copper disc with a pinhole, and a ring that closes onto it while the eye settles. The hairline on top is the progress.</sub></td>
+    <td width="50%"><img src="docs/screens/fixation.webp" alt="A fixation target"><br><sub><b>Fixation target.</b> A red disc with a pinhole, and a ring that closes onto it while the eye settles. The hairline on top is the progress.</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screens/head-turn.webp" alt="Head-turn guide"><br><sub><b>Head turn.</b> Keep looking at the ring and steer the copper circle (your nose) onto the blue dot. Teaches the network that turning the head is not looking elsewhere.</sub></td>
+    <td><img src="docs/screens/head-turn.webp" alt="Head-turn guide"><br><sub><b>Head turn.</b> Keep looking at the ring and steer the red circle (your nose) onto the blue dot. Teaches the network that turning the head is not looking elsewhere.</sub></td>
     <td><img src="docs/screens/button-check.webp" alt="Button check"><br><sub><b>Nine buttons.</b> The warm-up ends by measuring what is still off on real fixations, which seeds the correction.</sub></td>
   </tr>
   <tr>
@@ -81,7 +85,7 @@ The first time, it needs no calibration session: the generic base plus the 80-se
 | Use it without typing commands | `app` | A small window and a tray icon with every action below as a button. |
 | Move the pointer with your eyes in any app | `control --dot` | The pointer snaps to the button you look at (Windows UI Automation reads every app's buttons). |
 | Also click with your eyes | `control --dot --click` | Close both eyes a little longer than a blink (0.8 s for me) to click. Record your blinks once with `gesture`. |
-| See where it thinks you look | `dot` | A copper dot over the whole screen. Learns from your clicks and typing. |
+| See where it thinks you look | `dot` | A red dot over the whole screen. Learns from your clicks and typing. |
 | Use gaze in a web page | `dot --serve` | Streams gaze to `http://127.0.0.1:8770`; load `efg.js` in any page. Demos at `/demo` and `/read`. |
 | Know how good it is today | `track`, `targets` | Follow a ring, or pick lit buttons; both log the error. |
 

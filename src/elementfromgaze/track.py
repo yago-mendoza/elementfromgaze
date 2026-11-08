@@ -221,7 +221,7 @@ class WarmupStage(Stage):
             segs.append(Segment("fix", 1.9, (lambda t, x=fx * W, y=fy * H: (x, y)), 0.7, bg=BGS[k % 2]))
         # head turns while fixating: the dot drifted ~2-3 px per degree of head yaw (measured on the
         # head-motion sessions); 6 s of this in the CURRENT posture teaches the network to hold still
-        segs.append(message("Mira el aro todo el rato y mueve la cabeza: lleva tu marca naranja al punto azul.", 2.6))
+        segs.append(message("Mira el aro todo el rato y mueve la cabeza: lleva tu marca roja al punto azul.", 2.6))
         segs.append(Segment("vor", HEAD_S, (lambda t, x=W / 2, y=H * 0.45: (x, y)), 0.6, bg=BGS[0]))
         pts = CHECK_POINTS[:]
         random.shuffle(pts)
@@ -284,7 +284,7 @@ class WarmupStage(Stage):
                 ay, ap = self.head["now"][1] * sg[0], self.head["now"][0] * sg[1]
                 ax_, ay_ = x + np.clip(ay / HEAD_AMP, -1.3, 1.3) * R, y - np.clip(ap / HEAD_AMP, -1.3, 1.3) * R
                 c.create_oval(ax_ - 15, ay_ - 15, ax_ + 15, ay_ + 15, outline=look.ACCENT, width=3, tags="target")
-            c.create_text(x, y + R + 34, text="mira el aro blanco  ·  mueve la cabeza para llevar el círculo naranja al punto azul",
+            c.create_text(x, y + R + 34, text="mira el aro blanco  ·  mueve la cabeza para llevar el círculo rojo al punto azul",
                           fill=look.DIM, font=(look.SANS, 13), tags="target")
         look.ring(c, x, y, light_bg=_ink(seg.bg) != "#ffffff")
 

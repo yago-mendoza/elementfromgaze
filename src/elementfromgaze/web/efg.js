@@ -1004,9 +1004,9 @@
   function ensureEls() {
     if (lens) return;
     const mk = (css) => { const d = document.createElement("div"); d.setAttribute("data-efg", ""); d.style.cssText = "position:fixed;pointer-events:none;z-index:2147483647;display:none;" + css; document.documentElement.appendChild(d); return d; };
-    lineBar = mk("box-sizing:border-box;border-bottom:2px solid rgba(200,100,59,.8);background:rgba(200,100,59,.06);border-radius:3px;");
+    lineBar = mk("box-sizing:border-box;border-bottom:2px solid rgba(229,50,45,.8);background:rgba(229,50,45,.06);border-radius:3px;");
     lens = mk("box-sizing:border-box;border:2px solid rgba(236,234,230,.85);background:rgba(236,234,230,.06);box-shadow:0 0 14px rgba(0,0,0,.35);");
-    dot = mk("width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;background:#c8643b;opacity:.85;");
+    dot = mk("width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;background:#e5322d;opacity:.85;");
     tag = mk("left:8px;bottom:8px;font:12px/1.3 Consolas,monospace;color:#fff;background:#000a;padding:4px 8px;border-radius:4px;");
   }
   const sLens = {}, sDot = {}, sLine = {};

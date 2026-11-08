@@ -37,8 +37,8 @@ LINE = "#1B1B1F"
 TEXT = "#ECE9E4"
 MUTED = "#8B8A91"
 FAINT = "#56555B"
-ACCENT = "#C8643B"
-ACCENT_DIM = "#5E3323"
+ACCENT = "#E5322D"
+ACCENT_DIM = "#5E1D1A"
 LOG_BG = "#111114"
 LOG_FG = "#706F76"
 SANS, SANS_B, MONO = "Segoe UI", "Segoe UI Semibold", "Cascadia Mono"
@@ -67,7 +67,7 @@ def _mix(a: str, b: str, t: float) -> str:
 
 
 def eye_image(size: int, active: bool = False, plate: bool = False) -> Image.Image:
-    """The mark: an almond eye in copper. `active` fills it; `plate` puts it on a dark rounded tile."""
+    """The mark: an almond eye in red. `active` fills it; `plate` puts it on a dark rounded tile."""
     ss = 4
     S = size * ss
     im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
@@ -105,7 +105,7 @@ def toggle_image(on: bool, s: float) -> Image.Image:
     d = ImageDraw.Draw(im)
     lw = max(ss, round(1.1 * s * ss))
     d.rounded_rectangle([lw // 2, lw // 2, W - 1 - lw // 2, H - 1 - lw // 2], radius=H // 2,
-                        fill=_rgb("#26170F" if on else "#18181C") + (255,),
+                        fill=_rgb("#2A1211" if on else "#18181C") + (255,),
                         outline=_rgb(ACCENT if on else "#34343A") + (255,), width=lw)
     k = H - 2 * round(3.2 * s * ss)
     x0 = W - (H - k) // 2 - k if on else (H - k) // 2

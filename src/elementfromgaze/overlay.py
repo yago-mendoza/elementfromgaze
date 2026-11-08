@@ -279,7 +279,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
         if recheck["on"] or recheck["busy"]:
             return
         recheck.update(on=True, t0=time.monotonic(), rows=[])
-        print("   recalibración" + (" automática" if auto else "") + f": sigue el aro naranja (≈{recal_T + 4:.0f} s)")
+        print("   recalibración" + (" automática" if auto else "") + f": sigue el aro rojo (≈{recal_T + 4:.0f} s)")
 
     def finish_recheck() -> None:
         """Re-fit the network to this posture (background), then the global correction from the 3
@@ -577,7 +577,7 @@ def dot(radius: int = 12, learn: bool = True, warm: bool = True, rewarm: bool = 
                 print("   ⚠ postura nueva (" + ", ".join(why) + "): recalibro en 3 s")
                 gen["n"] += 1
                 toaster.show("Postura nueva: " + ", ".join(why),
-                             "Recalibro en 3 s: sigue el aro naranja (≈45 s). Después recuerdo esta postura.", "warn", 3000)
+                             "Recalibro en 3 s: sigue el aro rojo (≈45 s). Después recuerdo esta postura.", "warn", 3000)
                 root.after(3000, lambda: start_recheck(auto=True))
         p = latest.get("p")
         looking_away = now - latest.get("off_t", -1e9) < 0.25

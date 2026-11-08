@@ -9,8 +9,8 @@
   :root {
     --bg: #0b0b0c; --panel: #0f0f11; --line: #1e1e21; --line-2: #2a2a2e; --line-hi: #4a4843;
     --ink: #e8e4dc; --ink-2: #b4b0a8; --dim: #75726c; --faint: #4d4b47;
-    --acc: #c8643b; --acc-soft: rgba(200, 100, 59, .1);
-    --ok: #9ab894; --bad: #d9826d;
+    --acc: #e5322d; --acc-soft: rgba(229, 50, 45, .1);
+    --ok: #9ab894; --bad: #f0508c;
     --sans: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
     --mono: "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
   }
@@ -41,7 +41,7 @@
   button { font: 500 13.5px/1 var(--sans); color: var(--ink); background: transparent; border: 1px solid var(--line-2); border-radius: 5px;
     padding: 0 18px; height: 34px; cursor: pointer; transition: background .15s, border-color .15s, opacity .15s; }
   button:hover:not(:disabled) { border-color: var(--line-hi); background: rgba(232, 228, 220, .04); }
-  button.go, #done:not(:disabled) { border-color: rgba(200, 100, 59, .6); }
+  button.go, #done:not(:disabled) { border-color: rgba(229, 50, 45, .6); }
   button.go:hover:not(:disabled), #done:hover:not(:disabled) { border-color: var(--acc); background: var(--acc-soft); }
   button:disabled { opacity: .4; cursor: default; }
   label.st { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font: 12.5px/1.4 var(--sans); color: var(--dim); white-space: normal; }
@@ -59,7 +59,7 @@
   .ok { color: var(--ok); } .bad { color: var(--bad); }
 
   /* efg's own pointer, in this page's colours: the line being read gets a thin oxide underline */
-  html > div[data-efg][style*="border-bottom"] { border-bottom: 2px solid rgba(200, 100, 59, .85) !important; background: rgba(200, 100, 59, .07) !important; }
+  html > div[data-efg][style*="border-bottom"] { border-bottom: 2px solid rgba(229, 50, 45, .85) !important; background: rgba(229, 50, 45, .07) !important; }
   html > div[data-efg][style*="box-shadow"] { border: 1.5px solid rgba(232, 228, 220, .8) !important; background: rgba(232, 228, 220, .05) !important; box-shadow: none !important; }
 
   @media (max-width: 900px) { main { grid-template-columns: 1fr; } aside { position: static; } }

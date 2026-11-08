@@ -1,6 +1,6 @@
 """One look for every screen the tracker draws: calibration, warm-up, tests, the overlay, toasts.
 
-Near-black ground, quiet greys, one copper accent (the thing to look at). Head-movement phases
+Near-black ground with a red undertone, quiet greys, one red accent (the infrared look) (the thing to look at). Head-movement phases
 use a steel blue so "move your head" never looks like "look here". Fonts ship with Windows.
 """
 
@@ -9,19 +9,19 @@ from __future__ import annotations
 import re
 import tkinter as tk
 
-GROUND = "#111214"      # intro and message screens
-PANEL = "#1A1C1F"
-INK = "#ECEAE6"
-DIM = "#8C9097"
-FAINT = "#50545B"
-RULE = "#2A2D31"
-ACCENT = "#C8643B"      # copper: where to look, progress, the click ring
-ACCENT_HI = "#E58A5C"
+GROUND = "#120E0F"      # intro and message screens
+PANEL = "#1E1617"
+INK = "#F0E8E6"
+DIM = "#9A8D8E"
+FAINT = "#5C4C4E"
+RULE = "#302426"
+ACCENT = "#E5322D"      # red: where to look, progress, the click ring
+ACCENT_HI = "#FF6150"
 STEEL = "#6FA8C9"       # head-movement phases
 GOOD = "#5DBB73"
 WARN = "#D9A441"
-BAD = "#E5534B"
-GAZE = "#E8E4DC"        # the estimated-gaze dot: neutral, so it never competes with the target
+BAD = "#F0508C"       # rose, so a problem never looks like the red target
+GAZE = "#F2E6E2"        # the estimated-gaze dot: neutral, so it never competes with the target
 
 SANS = "Segoe UI"
 SANS_LIGHT = "Segoe UI Light"
@@ -107,7 +107,7 @@ def status_text(face: bool, perf: str, extra: str = "") -> str:
 
 
 def target(c: tk.Canvas, x, y, *, settle: float | None = None, light_bg=False, head=False, tags="target") -> None:
-    """The point to look at: a copper disc with a pinhole (a precise place for the eye to land),
+    """The point to look at: a red disc with a pinhole (a precise place for the eye to land),
     and while settling a ring that closes onto it. Head phases: a steel double ring."""
     if head:
         c.create_oval(x - 26, y - 26, x + 26, y + 26, outline=STEEL, width=2, tags=tags)
@@ -137,12 +137,12 @@ def message(c: tk.Canvas, W: int, H: int, text: str, kicker: str = "", tags="tar
 def progress(c: tk.Canvas, W: int, frac: float, light_bg=False, tags="progress") -> None:
     """A hairline across the top edge: how much of the stage is done (peripheral, never a target)."""
     c.delete(tags)
-    c.create_line(0, 1, W, 1, fill="#C9C6C0" if light_bg else RULE, width=2, tags=tags)
+    c.create_line(0, 1, W, 1, fill="#D2C6C4" if light_bg else RULE, width=2, tags=tags)
     c.create_line(0, 1, W * max(0.0, min(1.0, frac)), 1, fill=ACCENT, width=2, tags=tags)
 
 
 def warning(c: tk.Canvas, W: int, H: int, text: str, tags="quality") -> None:
-    """Can't see the eyes: a thin red frame and one line, so it is noticed at once."""
+    """Can't see the eyes: a thin rose frame and one line, so it is noticed at once."""
     c.create_rectangle(3, 3, W - 3, H - 3, outline=BAD, width=4, tags=tags)
     t = c.create_text(W / 2, 40, text=text, fill="#FFFFFF", font=(SANS_SEMI, 12), tags=tags)
     x0, y0, x1, y1 = c.bbox(t) or (W / 2 - 80, 30, W / 2 + 80, 50)
@@ -172,4 +172,4 @@ def button(c: tk.Canvas, x, y, w, h, label: str, lit=True, tags="target") -> Non
     """A UI-like button to look at (the warm-up's final check, the button test)."""
     round_rect(c, x - w / 2, y - h / 2, x + w / 2, y + h / 2, r=min(10, h / 4),
                fill=ACCENT if lit else PANEL, outline=ACCENT_HI if lit else RULE, width=1, tags=tags)
-    c.create_text(x, y, text=label, fill="#1A1210" if lit else DIM, font=(SANS_SEMI, -max(11, int(h * 0.36))), tags=tags)   # negative = pixels, immune to DPI scaling
+    c.create_text(x, y, text=label, fill="#1A0D0C" if lit else DIM, font=(SANS_SEMI, -max(11, int(h * 0.36))), tags=tags)   # negative = pixels, immune to DPI scaling

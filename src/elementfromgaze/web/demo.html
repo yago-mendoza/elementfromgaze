@@ -10,7 +10,7 @@
     --bg: #0b0b0c; --card: #111113; --card-hi: #18181b; --panel: #0f0f11;
     --line: #1e1e21; --line-2: #2a2a2e; --line-hi: #4a4843;
     --ink: #e8e4dc; --ink-2: #b4b0a8; --dim: #75726c; --faint: #4d4b47;
-    --acc: #c8643b; --acc-ink: #efc4ae; --acc-soft: rgba(200, 100, 59, .12);
+    --acc: #e5322d; --acc-ink: #f7c0b9; --acc-soft: rgba(229, 50, 45, .12);
     --sans: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
     --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
     --mono: "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
@@ -32,7 +32,7 @@
   .ctl input { accent-color: var(--acc); width: 14px; height: 14px; margin: 0; }
   kbd { font: 11px/1 var(--mono); color: var(--ink-2); border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 4px; padding: 3px 5px; margin-right: 6px; }
   #go { height: 34px; padding: 0 16px; font: 500 13px/1 var(--sans); color: var(--ink); background: transparent;
-    border: 1px solid rgba(200, 100, 59, .55); border-radius: 5px; cursor: pointer; transition: background .15s, border-color .15s; }
+    border: 1px solid rgba(229, 50, 45, .55); border-radius: 5px; cursor: pointer; transition: background .15s, border-color .15s; }
   #go:hover { background: var(--acc-soft); border-color: var(--acc); }
 
   /* one line on what to do, and the live status */
@@ -77,7 +77,7 @@
   svg path { cursor: pointer; fill: var(--card); stroke: var(--bg); stroke-width: 4; transition: fill .18s; }
   svg path:hover { fill: #151517; }
   svg path[data-gazed] { fill: #1d1d20; }
-  svg path.lit { fill: rgba(200, 100, 59, .22); }
+  svg path.lit { fill: rgba(229, 50, 45, .22); }
   svg text { pointer-events: none; text-anchor: middle; }
   svg text.n { fill: var(--ink-2); font: 500 12.5px var(--sans); }
   svg text.v { fill: var(--faint); font: 9.5px var(--mono); }
@@ -98,7 +98,7 @@
 
   /* efg's own pointer, in this page's colours (the lens that morphs onto what you look at) */
   html > div[data-efg][style*="box-shadow"] { border: 1.5px solid rgba(232, 228, 220, .85) !important; background: rgba(232, 228, 220, .05) !important; box-shadow: none !important; }
-  html > div[data-efg][style*="border-bottom"] { border-bottom: 2px solid rgba(200, 100, 59, .85) !important; background: rgba(200, 100, 59, .07) !important; }
+  html > div[data-efg][style*="border-bottom"] { border-bottom: 2px solid rgba(229, 50, 45, .85) !important; background: rgba(229, 50, 45, .07) !important; }
 
   @media (max-width: 1100px) { main { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); row-gap: 32px; } aside { grid-column: 1 / -1; } }
   @media (max-width: 760px) { main { grid-template-columns: 1fr; } .ctl { gap: 14px; } .ctl .hint { display: none; } #st { display: none; } }
@@ -216,7 +216,7 @@
   const targets = () => [...document.querySelectorAll("main button, svg path")];
   document.getElementById("go").onclick = async () => {
     const T = targets(), res = document.getElementById("res"), rows = [];
-    res.textContent = "mira cada objetivo naranja…";
+    res.textContent = "mira cada objetivo rojo…";
     await new Promise((r) => setTimeout(r, 1200));
     for (let i = 0; i < 20; i++) {
       let t; do { t = T[Math.floor(Math.random() * T.length)]; } while (rows.length && rows[rows.length - 1].t === t);
